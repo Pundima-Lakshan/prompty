@@ -5,6 +5,7 @@ import (
 	"prompty/internal/ui/styles"
 	"strings"
 
+	"github.com/atotto/clipboard" // Added: Import the clipboard library
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -13,7 +14,7 @@ import (
 // ComposeModel handles prompt composition
 type ComposeModel struct {
 	textarea      textarea.Model
-	selectedFiles []string
+	selectedFiles []FileItem
 	finalPrompt   string
 	showOutput    bool
 }
@@ -32,14 +33,23 @@ func NewComposeModel() *ComposeModel {
 	ta.SetHeight(8)
 
 	return &ComposeModel{
-		textarea: ta,
-		selectedFiles: []string{
-			"main.go",
-			"internal/ui/models/app.go", // Mock selected files
-		},
-		finalPrompt: "",
-		showOutput:  false,
+		textarea:      ta,
+		selectedFiles: []FileItem{}, // Populated by App model
+		finalPrompt:   "",
+		showOutput:    false,
 	}
+}
+
+// SetSelectedFiles updates the ComposeModel's list of files that will be included
+// in the generated prompt. This method is called by the App model.
+func (m *ComposeModel) SetSelectedFiles(files []FileItem) tea.Cmd {
+	m.selectedFiles = files // Update the list of selected files
+	// If the output screen is currently visible, regenerate the prompt to reflect
+	// any changes in the selected files' content or list.
+	if m.showOutput {
+		m.generatePrompt()
+	}
+	return nil // No command returned
 }
 
 // Update handles compose model updates
@@ -59,12 +69,16 @@ func (m *ComposeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showOutput = false
 				return m, nil
 			}
-		case "ctrl+s":
-			// TODO: Save prompt to file
-			return m, nil
-		case "ctrl+c":
+		case "y": // Copy to clipboard
 			if m.showOutput {
-				// TODO: Copy to clipboard
+				// Implement copy to clipboard functionality using github.com/atotto/clipboard
+				err := clipboard.WriteAll(m.finalPrompt)
+				if err != nil {
+					// In a real application, you might want to show an error message to the user
+					// For now, we'll just acknowledge the attempt.
+					// You could add a temporary status message to the model for this.
+					_ = err // Suppress "err declared and not used" warning if not handled visibly
+				}
 				return m, nil
 			}
 		}
@@ -92,13 +106,9 @@ func (m *ComposeModel) generatePrompt() {
 		builder.WriteString("## Relevant Files\n\n")
 
 		for _, file := range m.selectedFiles {
-			builder.WriteString(fmt.Sprintf("### %s\n\n", file))
+			builder.WriteString(fmt.Sprintf("### %s\n\n", file.Path))
 			builder.WriteString("```\n")
-			builder.WriteString("// File content would be here\n")
-			builder.WriteString("package main\n\n")
-			builder.WriteString("func main() {\n")
-			builder.WriteString("    // Sample content\n")
-			builder.WriteString("}\n")
+			builder.WriteString(file.Content) // Use actual file content
 			builder.WriteString("```\n\n")
 		}
 	}
@@ -118,8 +128,12 @@ func (m *ComposeModel) View() string {
 	)
 
 	var filesList []string
-	for _, file := range m.selectedFiles {
-		filesList = append(filesList, "  ✓ "+file)
+	if len(m.selectedFiles) == 0 {
+		filesList = append(filesList, styles.HelpStyle.Render("No files selected yet. Go to 'Search' tab to find and tag files."))
+	} else {
+		for _, file := range m.selectedFiles {
+			filesList = append(filesList, "  ✓ "+file.Path)
+		}
 	}
 
 	filesSection := lipgloss.JoinVertical(
@@ -138,9 +152,9 @@ func (m *ComposeModel) View() string {
 		m.textarea.View(),
 	)
 
-	// Help section
+	// Help section - Removed "Ctrl+S: Save"
 	help := styles.HelpStyle.Render(
-		"Ctrl+G: Generate • Ctrl+S: Save • Esc: Back",
+		"Ctrl+G: Generate • Esc: Back",
 	)
 
 	return lipgloss.JoinVertical(
@@ -166,8 +180,9 @@ func (m *ComposeModel) renderOutput() string {
 		Height(20).
 		Render(m.finalPrompt)
 
+	// Updated help text to include 'Y' for copy
 	help := styles.HelpStyle.Render(
-		"Ctrl+C: Copy • Ctrl+S: Save • Esc: Back to editing",
+		"Y: Copy • Esc: Back to editing",
 	)
 
 	return lipgloss.JoinVertical(

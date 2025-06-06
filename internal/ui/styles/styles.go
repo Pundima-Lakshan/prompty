@@ -5,58 +5,58 @@ import (
 )
 
 var (
-	// Colors
-	PrimaryColor    = lipgloss.Color("#7C3AED")
-	SecondaryColor  = lipgloss.Color("#10B981")
-	AccentColor     = lipgloss.Color("#F59E0B")
-	ErrorColor      = lipgloss.Color("#EF4444")
-	MutedColor      = lipgloss.Color("#6B7280")
-	BackgroundColor = lipgloss.Color("#1F2937")
+	// Colors used throughout the application for a consistent theme.
+	PrimaryColor    = lipgloss.Color("#7C3AED") // Purple
+	SecondaryColor  = lipgloss.Color("#10B981") // Green
+	AccentColor     = lipgloss.Color("#F59E0B") // Amber
+	ErrorColor      = lipgloss.Color("#EF4444") // Red
+	MutedColor      = lipgloss.Color("#6B7280") // Gray for less prominent text
+	BackgroundColor = lipgloss.Color("#1F2937") // Dark blue-gray for backgrounds
 
-	// Base styles
+	// BaseStyle for general content containers.
 	BaseStyle = lipgloss.NewStyle().
-			Padding(1, 2).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(MutedColor)
+			Padding(1, 2).                    // Padding around content
+			Border(lipgloss.RoundedBorder()). // Rounded border for a modern look
+			BorderForeground(MutedColor)      // Muted border color
 
-	// Header style
+	// HeaderStyle for the main application title.
 	HeaderStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(PrimaryColor).
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderBottom(true).
-			BorderForeground(PrimaryColor).
-			MarginBottom(1).
-			Padding(0, 1)
+			Bold(true).                           // Bold text
+			Foreground(PrimaryColor).             // Primary color for text
+			BorderStyle(lipgloss.NormalBorder()). // Normal border style
+			BorderBottom(true).                   // Only bottom border
+			BorderForeground(PrimaryColor).       // Primary color for border
+			MarginBottom(1).                      // Margin below the header
+			Padding(0, 1)                         // Padding within the header
 
-	// Status bar
+	// StatusStyle for status bar elements (currently not explicitly used as a bar but for concepts).
 	StatusStyle = lipgloss.NewStyle().
-			Background(PrimaryColor).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Padding(0, 1)
+			Background(PrimaryColor).              // Primary color background
+			Foreground(lipgloss.Color("#FFFFFF")). // White text
+			Padding(0, 1)                          // Padding
 
-	// Help text
+	// HelpStyle for hints and keyboard shortcuts.
 	HelpStyle = lipgloss.NewStyle().
-			Foreground(MutedColor).
-			Italic(true)
+			Foreground(MutedColor). // Muted text color
+			Italic(true)            // Italic font
 
-	// Selected item
+	// SelectedStyle for the currently highlighted item in lists.
 	SelectedStyle = lipgloss.NewStyle().
-			Background(PrimaryColor).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Bold(true)
+			Background(PrimaryColor).              // Primary color background
+			Foreground(lipgloss.Color("#FFFFFF")). // White text
+			Bold(true)                             // Bold text
 
-	// Normal item
+	// NormalStyle for unselected items in lists.
 	NormalStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF"))
+			Foreground(lipgloss.Color("#FFFFFF")) // White text
 
-	// Tagged item
+	// TaggedStyle for items that have been "tagged" or selected for inclusion.
 	TaggedStyle = lipgloss.NewStyle().
-			Background(SecondaryColor).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Bold(true)
+			Background(SecondaryColor).            // Secondary color background
+			Foreground(lipgloss.Color("#FFFFFF")). // White text
+			Bold(true)                             // Bold text
 
-	// Tab styles
+	// Tab styles for navigation.
 	ActiveTabStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#FFFFFF")).
@@ -66,17 +66,18 @@ var (
 
 	InactiveTabStyle = lipgloss.NewStyle().
 				Foreground(MutedColor).
-				Background(lipgloss.Color("#374151")).
+				Background(lipgloss.Color("#374151")). // Slightly darker gray for inactive tabs
 				Padding(0, 2).
 				MarginRight(1)
 
+	// TabBarStyle for the container holding all tabs.
 	TabBarStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderBottom(true).
-			BorderForeground(MutedColor).
-			MarginBottom(1)
+			BorderStyle(lipgloss.NormalBorder()). // Normal border
+			BorderBottom(true).                   // Only bottom border
+			BorderForeground(MutedColor).         // Muted border color
+			MarginBottom(1)                       // Margin below the tab bar
 
-	// Individual tab colors
+	// Individual tab colors for visual distinction.
 	SearchTabStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#FFFFFF")).
