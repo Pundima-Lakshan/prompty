@@ -1,25 +1,25 @@
 package models
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"prompty/internal/search"
 	"prompty/internal/ui/styles"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
 // SearchResultsMsg is a custom message type used to carry the results
-// back from the asynchronous ripgrep search command.
-// It now carries a slice of FileItem.
+// back from the asynchronous ripgrep search command. (No longer directly used for main search)
 type SearchResultsMsg []FileItem
 
 // SearchErrorMsg is a custom message type to convey errors from the search operation.
@@ -27,31 +27,40 @@ type SearchErrorMsg struct {
 	Err error
 }
 
-// fileContentMsg is a message type for when a file's content has been successfully loaded.
+// fileContentMsg is a custom message type for when a file's content has been successfully loaded.
 type fileContentMsg struct {
 	Path    string // Path of the file whose content was loaded
 	Content string // The loaded content
 }
 
-// fileContentErrorMsg is a message type for when an error occurs during file content loading.
+// fileContentErrorMsg is a custom message type for when an error occurs during file content loading.
 type fileContentErrorMsg struct {
 	Path string // Path of the file that caused the error
 	Err  error  // The error itself
 }
 
+// FuzzySearchResultsMsg is a custom message type for results returned by non-interactive fzf.
+type FuzzySearchResultsMsg []string // slice of fuzzy-matched file paths
+
+// FuzzySearchErrorMsg is a custom message type for errors from non-interactive fzf.
+type FuzzySearchErrorMsg struct {
+	Err error
+}
+
 // SearchModel handles the search functionality, including the search input,
 // displaying results, and allowing navigation and tagging within those results.
 type SearchModel struct {
-	textInput      textinput.Model
-	results        []FileItem
-	cursor         int
-	debounceTicker *time.Ticker
-	lastUpdate     time.Time
-	querying       bool
-	err            error
-	baseDir        string
-	preview        string
-	showPreview    bool
+	textInput       textinput.Model // Bubble Tea text input component for search query
+	results         []FileItem      // Stores the parsed results as FileItem, allowing tagging
+	cursor          int             // Index of the currently highlighted result
+	debounceTicker  *time.Ticker    // Ticker for debouncing search queries
+	lastUpdate      time.Time       // Timestamp of the last text input update
+	querying        bool            // Flag to indicate if a search is in progress (now for fzf execution)
+	err             error           // Stores any error that occurred during the search
+	baseDir         string          // The base directory for file paths
+	preview         string          // Content of the file currently being previewed
+	showPreview     bool            // Flag to indicate if the file preview is active
+	resultsViewport viewport.Model  // Added: Viewport for scrollable search results
 }
 
 // Init initializes the search model.
@@ -64,10 +73,16 @@ func (m *SearchModel) Init() tea.Cmd {
 // It sets up the text input, initializes debouncing, and gets the current working directory.
 func NewSearchModel() *SearchModel {
 	ti := textinput.New()
-	ti.Placeholder = "Enter search pattern (e.g., '*.go', 'TODO', 'func main')"
+	ti.Placeholder = "Type to fuzzy search for files..."
 	ti.Focus()
 	ti.CharLimit = 156
-	ti.Width = 50
+	ti.Width = 50 // Set width directly during initialization
+
+	// Initialize viewport with arbitrary dimensions, will be updated by WindowSizeMsg
+	// Set width based on text input width, initial height arbitrary
+	vp := viewport.New(ti.Width, 10)
+	vp.HighPerformanceRendering = false // Can set to true for performance, but might redraw more often
+	vp.MouseWheelEnabled = true         // Enabled mouse wheel scrolling for search results
 
 	baseDir, err := os.Getwd()
 	if err != nil {
@@ -75,15 +90,17 @@ func NewSearchModel() *SearchModel {
 	}
 
 	return &SearchModel{
-		textInput:      ti,
-		results:        []FileItem{},
-		cursor:         0,
-		debounceTicker: time.NewTicker(300 * time.Millisecond),
-		lastUpdate:     time.Now(),
-		querying:       false,
-		baseDir:        baseDir,
-		preview:        "",
-		showPreview:    false,
+		textInput:       ti,
+		results:         []FileItem{},
+		cursor:          0,
+		debounceTicker:  time.NewTicker(300 * time.Millisecond),
+		lastUpdate:      time.Now(),
+		querying:        false,
+		err:             nil,
+		baseDir:         baseDir,
+		preview:         "",
+		showPreview:     false,
+		resultsViewport: vp, // Initialize the results viewport
 	}
 }
 
@@ -98,38 +115,94 @@ func debounceCmd(interval time.Duration) tea.Cmd {
 	})
 }
 
-// searchFilesCmd is a Bubble Tea command that asynchronously runs the ripgrep search.
-// It takes a search pattern as input.
-func searchFilesCmd(pattern string, baseDir string) tea.Cmd {
-	return func() tea.Msg {
-		log.Printf("searchFilesCmd: Initiating ripgrep for pattern '%s' in dir '%s'", pattern, baseDir)
-		matches, err := search.RunRipgrep(pattern, baseDir)
-		if err != nil {
-			log.Printf("searchFilesCmd: Error running ripgrep: %v", err)
-			return SearchErrorMsg{Err: fmt.Errorf("ripgrep search failed: %w", err)}
+// getFileListCommand prepares the command to generate the file list.
+func getFileListCommand(baseDir string) *exec.Cmd {
+	if _, err := exec.LookPath("git"); err == nil {
+		gitRevParseCmd := exec.Command("git", "-C", baseDir, "rev-parse", "--is-inside-work-tree")
+		var gitRevParseOut bytes.Buffer
+		gitRevParseCmd.Stdout = &gitRevParseOut
+		if gitRevParseCmd.Run() == nil && strings.TrimSpace(gitRevParseOut.String()) == "true" {
+			log.Printf("getFileListCommand: Using 'git ls-files' to get file list.")
+			return exec.Command("git", "-C", baseDir, "ls-files")
 		}
-		log.Printf("searchFilesCmd: Ripgrep returned %d matches.", len(matches))
+	}
 
-		// Convert RipgrepMatch to FileItem for uniform handling in results.
-		var fileItems []FileItem
-		uniqueFiles := make(map[string]struct{})
-		for _, m := range matches {
-			if _, exists := uniqueFiles[m.File]; !exists {
-				fileItems = append(fileItems, FileItem{
-					Path:          m.File,
-					OriginalMatch: &m,
-				})
-				uniqueFiles[m.File] = struct{}{}
+	log.Printf("getFileListCommand: Using 'rg --files' to get file list.")
+	cmd := exec.Command("rg", "--files", "--hidden", "--no-ignore", ".", "--max-depth", "100")
+	cmd.Dir = baseDir
+	return cmd
+}
+
+// runFuzzySearchCmd executes fzf in non-interactive mode to get fuzzy-matched file paths
+// by streaming file list to it. This command runs in a goroutine and sends results
+// back to the main program loop.
+func runFuzzySearchCmd(query string, baseDir string) tea.Cmd {
+	return func() tea.Msg { // This function now returns a message when done
+		fileListCmd := getFileListCommand(baseDir)
+		stdoutPipe, err := fileListCmd.StdoutPipe()
+		if err != nil {
+			log.Printf("runFuzzySearchCmd (Cmd func): Error creating stdout pipe for file list cmd: %v", err)
+			return FuzzySearchErrorMsg{Err: fmt.Errorf("failed to create pipe for file list: %w", err)}
+		}
+		fileListCmd.Stderr = os.Stderr // Direct file list errors to main stderr for debugging
+
+		fzfArgs := []string{"--filter", query, "--print0"}
+		fzfCmd := exec.Command("fzf", fzfArgs...)
+		fzfCmd.Stdin = stdoutPipe // Pipe fileListCmd's stdout directly to fzf's stdin
+
+		var stdout, stderr bytes.Buffer
+		fzfCmd.Stdout = &stdout
+		fzfCmd.Stderr = &stderr
+
+		// Start the file list command
+		if err := fileListCmd.Start(); err != nil {
+			log.Printf("runFuzzySearchCmd (Cmd func): Error starting file list command: %v", err)
+			stdoutPipe.Close() // Close pipe to prevent resource leak
+			return FuzzySearchErrorMsg{Err: fmt.Errorf("failed to start file list command: %w", err)}
+		}
+		log.Printf("runFuzzySearchCmd (Cmd func): Started file list generation for streaming to fzf.")
+
+		// Start the fzf command
+		if err := fzfCmd.Start(); err != nil {
+			log.Printf("runFuzzySearchCmd (Cmd func): Error starting fzf command: %v", err)
+			stdoutPipe.Close()         // Ensure pipe is closed if fzf fails to start
+			fileListCmd.Process.Kill() // Try to stop file list command
+			fileListCmd.Wait()
+			return FuzzySearchErrorMsg{Err: fmt.Errorf("failed to start fzf command: %w", err)}
+		}
+		log.Printf("runFuzzySearchCmd (Cmd func): Executing fzf --filter with query '%s'", query)
+
+		// Wait for both commands to finish.
+		var errs []error
+
+		fzfWaitErr := fzfCmd.Wait()
+		if fzfWaitErr != nil {
+			errs = append(errs, fmt.Errorf("fzf exited with error: %w (stderr: %s)", fzfWaitErr, stderr.String()))
+		}
+
+		fileListWaitErr := fileListCmd.Wait()
+		if fileListWaitErr != nil {
+			errs = append(errs, fmt.Errorf("file list command exited with error: %w", fileListWaitErr))
+		}
+		stdoutPipe.Close() // Explicitly close the pipe after both commands are done
+
+		if len(errs) > 0 {
+			finalErr := fmt.Errorf("fuzzy search process errors: %v", errs)
+			log.Printf("runFuzzySearchCmd (Cmd func): Errors during execution: %v", finalErr)
+			return FuzzySearchErrorMsg{Err: finalErr}
+		}
+
+		// Parse the null-terminated output from fzf
+		rawPaths := bytes.Split(stdout.Bytes(), []byte{0x00})
+		var matchedPaths []string
+		for _, p := range rawPaths {
+			path := string(p)
+			if strings.TrimSpace(path) != "" {
+				matchedPaths = append(matchedPaths, path)
 			}
 		}
-		log.Printf("searchFilesCmd: Converted to %d unique FileItems.", len(fileItems))
-
-		// Sort file items by path for consistent display.
-		sort.Slice(fileItems, func(i, j int) bool {
-			return strings.ToLower(fileItems[i].Path) < strings.ToLower(fileItems[j].Path)
-		})
-
-		return SearchResultsMsg(fileItems)
+		log.Printf("runFuzzySearchCmd (Cmd func): fzf --filter returned %d matched paths.", len(matchedPaths))
+		return FuzzySearchResultsMsg(matchedPaths) // Send results back to the main Update loop
 	}
 }
 
@@ -149,6 +222,7 @@ func readFileContent(filePath string) (string, error) {
 // This prevents blocking the UI while reading potentially large files.
 func (m *SearchModel) loadFileContentCmd(filePath string) tea.Cmd {
 	return func() tea.Msg {
+		// IMPORTANT: filePath from fzf should generally be relative to baseDir.
 		fullPath := filepath.Join(m.baseDir, filePath)
 		log.Printf("loadFileContentCmd: Triggered for path: %s (full: %s)", filePath, fullPath)
 		content, err := readFileContent(fullPath)
@@ -180,21 +254,61 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	log.Printf("SearchModel Update received message: %T", msg)
 
+	// Always update text input first.
 	oldTextInputValue := m.textInput.Value()
 	m.textInput, cmd = m.textInput.Update(msg)
 	cmds = append(cmds, cmd)
 
+	// If the text input value has changed (meaning a character was typed or deleted),
+	// reset the debounce timer and trigger a fuzzy search.
 	if m.textInput.Focused() && oldTextInputValue != m.textInput.Value() {
 		m.lastUpdate = time.Now()
+		// We'll trigger the fuzzy search on debounce.
 		if !m.querying {
 			cmds = append(cmds, debounceCmd(300*time.Millisecond))
-			log.Printf("SearchModel: Text input changed, starting debounce.")
+			log.Printf("SearchModel: Text input changed, starting debounce for fuzzy search.")
 		}
 	}
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		log.Printf("SearchModel: WindowSizeMsg received. Width: %d, Height: %d", msg.Width, msg.Height)
+
+		// Calculate available width for content (adjust for overall BaseStyle padding/borders)
+		contentWidth := msg.Width - 4 // Assuming 4 for overall padding/borders
+
+		// Estimate fixed UI height in search tab:
+		// Search title: 1 line
+		// Search text input: 1 line
+		// Spacer: 1 line
+		// Help text: 1 line
+		// Status section: 1 line
+		// Results title: 1 line
+		// Spacers: 2 lines
+		// Total rough fixed height: 1+1+1+1+1+1+2 = 8 lines
+		minFixedUiHeight := 8
+
+		availableResultsHeight := msg.Height - minFixedUiHeight
+		if availableResultsHeight < 5 { // Ensure minimum height for results viewport
+			availableResultsHeight = 5
+		}
+
+		// Update dimensions for text input and results viewport
+		m.textInput.Width = contentWidth
+		m.resultsViewport.Width = contentWidth
+		m.resultsViewport.Height = availableResultsHeight
+		log.Printf("SearchModel: Resized text input to W:%d. Resized results viewport to W:%d H:%d",
+			m.textInput.Width, m.resultsViewport.Width, m.resultsViewport.Height)
+
+		// Delegate WindowSizeMsg to text input and viewport
+		m.textInput, cmd = m.textInput.Update(msg)
+		cmds = append(cmds, cmd)
+		m.resultsViewport, cmd = m.resultsViewport.Update(msg)
+		cmds = append(cmds, cmd)
+		return m, tea.Batch(cmds...)
+
 	case tea.KeyMsg:
-		log.Printf("SearchModel: KeyMsg received: %s (Type: %d, Mod: %d)", msg.String(), msg.Type)
+		log.Printf("SearchModel: KeyMsg received: %s (Type: %d)", msg.String(), msg.Type)
 		switch msg.Type {
 		case tea.KeyEnter:
 			log.Printf("SearchModel: Enter key pressed.")
@@ -202,19 +316,14 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showPreview = false
 				m.preview = ""
 				log.Printf("SearchModel: Preview closed.")
-			} else if m.cursor >= 0 && m.cursor < len(m.results) { // If not in preview, try to open preview
-				m.showPreview = true
-				m.preview = "Loading content..."
-				cmds = append(cmds, m.loadFileContentCmd(m.results[m.cursor].Path))
-				log.Printf("SearchModel: Loading content for preview: %s", m.results[m.cursor].Path)
-			} else { // No results to preview, trigger search
+			} else {
+				// Enter will now trigger a fuzzy search if not already querying
 				query := m.textInput.Value()
-				if query != "" {
-					m.err = nil
-					m.querying = true
-					cmds = append(cmds, searchFilesCmd(query, m.baseDir))
-					log.Printf("SearchModel: Triggering search for query: %s", query)
-				}
+				m.err = nil
+				m.querying = true
+				m.results = []FileItem{} // Clear previous results before new search
+				cmds = append(cmds, runFuzzySearchCmd(query, m.baseDir))
+				log.Printf("SearchModel: Triggering fuzzy search on Enter for query: '%s'.", query)
 			}
 		case tea.KeyEsc:
 			log.Printf("SearchModel: Esc key pressed.")
@@ -222,53 +331,58 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showPreview = false
 				m.preview = ""
 				log.Printf("SearchModel: Preview closed via Esc.")
+			} else {
+				// Clear the search query and results
+				m.textInput.SetValue("")
+				m.results = []FileItem{}
+				m.err = nil
+				m.querying = false
+				m.cursor = 0
+				cmds = append(cmds, func() tea.Msg { return TaggedFilesMsg(m.GetTaggedFiles()) })
+				log.Printf("SearchModel: Search cleared via Esc.")
 			}
-		case tea.KeyCtrlN:
+		case tea.KeyCtrlN: // Ctrl+N for navigating down (custom handling)
 			log.Printf("SearchModel: Ctrl+N pressed (down).")
 			if len(m.results) > 0 {
 				m.cursor = (m.cursor + 1) % len(m.results)
-				log.Printf("SearchModel: Cursor moved to %d.", m.cursor)
+				m.resultsViewport.SetYOffset(m.cursor) // Corrected: Use SetYOffset for viewport scrolling
+				log.Printf("SearchModel: Cursor moved to %d. Viewport scrolled.", m.cursor)
 				if m.showPreview {
 					m.preview = "Loading content..."
 					cmds = append(cmds, m.loadFileContentCmd(m.results[m.cursor].Path))
 					log.Printf("SearchModel: Loading content for preview: %s", m.results[m.cursor].Path)
 				}
 			}
-		case tea.KeyCtrlP:
+		case tea.KeyCtrlP: // Ctrl+P for navigating up (custom handling)
 			log.Printf("SearchModel: Ctrl+P pressed (up).")
 			if len(m.results) > 0 {
 				m.cursor = (m.cursor - 1 + len(m.results)) % len(m.results)
-				log.Printf("SearchModel: Cursor moved to %d.", m.cursor)
+				m.resultsViewport.SetYOffset(m.cursor) // Corrected: Use SetYOffset for viewport scrolling
+				log.Printf("SearchModel: Cursor moved to %d. Viewport scrolled.", m.cursor)
 				if m.showPreview {
 					m.preview = "Loading content..."
 					cmds = append(cmds, m.loadFileContentCmd(m.results[m.cursor].Path))
 					log.Printf("SearchModel: Loading content for preview: %s", m.results[m.cursor].Path)
 				}
 			}
-		case tea.KeyCtrlA: // Ctrl+A for tagging
+		case tea.KeyCtrlA: // Ctrl+A for tagging (custom handling)
 			log.Printf("SearchModel: Ctrl+A pressed (tag/untag).")
 			if m.cursor >= 0 && m.cursor < len(m.results) {
-				// Get a reference to the current file item to modify it in place
 				fileToModify := &m.results[m.cursor]
-
-				// Toggle the tagged status
 				fileToModify.Tagged = !fileToModify.Tagged
 				log.Printf("SearchModel: Toggled tag for %s. New status: %v", fileToModify.Path, fileToModify.Tagged)
 
-				if fileToModify.Tagged { // If the file is now tagged
-					if fileToModify.Content == "" { // If content hasn't been loaded yet for this file
+				if fileToModify.Tagged {
+					if fileToModify.Content == "" {
 						log.Printf("SearchModel: Content not loaded for %s. Initiating load. TaggedFilesMsg will be sent after content arrives.", fileToModify.Path)
-						// Initiate content load. TaggedFilesMsg will be sent AFTER content is loaded via fileContentMsg.
 						cmds = append(cmds, m.loadFileContentCmd(fileToModify.Path))
 					} else {
-						// Content is already present (e.g., from a previous preview), send TaggedFilesMsg immediately.
 						log.Printf("SearchModel: Content already present for %s. Sending TaggedFilesMsg immediately.", fileToModify.Path)
 						cmds = append(cmds, func() tea.Msg {
 							return TaggedFilesMsg(m.GetTaggedFiles())
 						})
 					}
-				} else { // If the file is now untagged
-					// Untagging does not depend on content loading. Send TaggedFilesMsg immediately.
+				} else {
 					log.Printf("SearchModel: Untagged file %s. Sending TaggedFilesMsg immediately.", fileToModify.Path)
 					cmds = append(cmds, func() tea.Msg {
 						return TaggedFilesMsg(m.GetTaggedFiles())
@@ -276,49 +390,103 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+
+	case tea.MouseMsg: // Delegate mouse events to the viewport
+		log.Printf("SearchModel: MouseMsg received: %s", msg.String())
+		m.resultsViewport, cmd = m.resultsViewport.Update(msg)
+		cmds = append(cmds, cmd)
+
 	case MsgDebouncedSearch:
 		log.Printf("SearchModel: MsgDebouncedSearch received.")
 		if time.Since(m.lastUpdate) >= 300*time.Millisecond {
 			query := m.textInput.Value()
-			if query != "" {
-				m.err = nil
-				m.querying = true
-				cmds = append(cmds, searchFilesCmd(query, m.baseDir))
-				log.Printf("SearchModel: Debounced search triggered for query: '%s'.", query)
-			} else {
-				m.results = []FileItem{}
-				m.err = nil
-				m.querying = false
-				log.Printf("SearchModel: Debounced search, query empty, results cleared.")
-			}
+			m.err = nil
+			m.querying = true        // Indicate search is active
+			m.results = []FileItem{} // Clear previous results before new search
+			cmds = append(cmds, runFuzzySearchCmd(query, m.baseDir))
+			log.Printf("SearchModel: Debounced fuzzy search triggered for query: '%s'.", query)
 		} else {
 			log.Printf("SearchModel: Debounced search received, but not enough time passed (%.0fms since last update). Skipping.", time.Since(m.lastUpdate).Milliseconds())
 		}
-	case SearchResultsMsg:
-		log.Printf("SearchModel: SearchResultsMsg received. %d results found.", len(msg))
+	case FuzzySearchResultsMsg: // Message type for fzf --filter results
+		log.Printf("SearchModel: FuzzySearchResultsMsg received. %d paths matched.", len(msg))
+		m.querying = false // Fuzzy search is complete
+
+		var newResults []FileItem
+		contentLoadCmds := make([]tea.Cmd, 0, len(msg))
+
+		// For each matched path, create a FileItem and initiate content loading.
+		for _, p := range msg {
+			fileItem := FileItem{Path: p, Tagged: false} // Initially not tagged, but matched
+			// Check if this file was already in m.results and was tagged.
+			// If so, preserve its tagged state and content.
+			for _, oldFile := range m.results {
+				if oldFile.Path == p {
+					fileItem.Tagged = oldFile.Tagged
+					fileItem.Content = oldFile.Content // Preserve already loaded content
+					break
+				}
+			}
+			newResults = append(newResults, fileItem)
+			// Only load content if not already loaded and not already tagged (meaning content is needed for prompt)
+			if fileItem.Content == "" {
+				contentLoadCmds = append(contentLoadCmds, m.loadFileContentCmd(p))
+			}
+		}
+		m.results = newResults // Update the results list with the new fuzzy matches
+
+		if len(m.results) == 0 && m.textInput.Value() != "" {
+			m.err = fmt.Errorf("no fuzzy matches found for '%s'", m.textInput.Value())
+			log.Printf("SearchModel: No fuzzy matches found for query: '%s'.", m.textInput.Value())
+		} else {
+			m.err = nil
+		}
+
+		if len(m.results) > 0 {
+			m.cursor = 0                // Reset cursor to top for new results
+			m.resultsViewport.GotoTop() // Scroll viewport to top
+		} else {
+			m.cursor = 0
+		}
+		log.Printf("SearchModel: Updated results with %d fuzzy matches. Initiating content loads for new files.", len(m.results))
+		cmds = append(cmds, tea.Batch(contentLoadCmds...))
+		cmds = append(cmds, func() tea.Msg {
+			return TaggedFilesMsg(m.GetTaggedFiles())
+		})
+		return m, tea.Batch(cmds...)
+
+	case FuzzySearchErrorMsg:
+		log.Printf("SearchModel: FuzzySearchErrorMsg received: %v", msg.Err)
+		m.results = []FileItem{}
+		m.err = msg.Err
+		m.querying = false
+		m.resultsViewport.SetContent("Error: " + msg.Err.Error()) // Show error in viewport
+		m.cursor = 0
+		cmds = append(cmds, func() tea.Msg { return TaggedFilesMsg(m.GetTaggedFiles()) })
+		return m, tea.Batch(cmds...)
+
+	case SearchResultsMsg: // This message type was for previous direct ripgrep output, now mostly unused.
+		log.Printf("SearchModel: SearchResultsMsg received (likely from a stale command, not used in fuzzy flow).")
 		m.results = msg
 		m.querying = false
 		m.cursor = 0
 		if len(m.results) == 0 && m.textInput.Value() != "" {
 			m.err = fmt.Errorf("no matches found for '%s'", m.textInput.Value())
-			log.Printf("SearchModel: No matches found for query: '%s'.", m.textInput.Value())
 		} else {
 			m.err = nil
 		}
-		// Always inform App model about potentially changed tagged files after search.
-		// Existing tags might be on files not returned by new search, or new files can be found.
+		m.resultsViewport.GotoTop()
 		cmds = append(cmds, func() tea.Msg {
 			return TaggedFilesMsg(m.GetTaggedFiles())
 		})
-		log.Printf("SearchModel: Sent TaggedFilesMsg after search results update.")
-	case SearchErrorMsg:
+	case SearchErrorMsg: // This message type is for errors from the underlying ripgrep content search
 		log.Printf("SearchModel: SearchErrorMsg received: %v", msg.Err)
 		m.results = []FileItem{}
 		m.err = msg.Err
 		m.querying = false
+		m.resultsViewport.SetContent("Error: " + msg.Err.Error()) // Show error in viewport
 	case fileContentMsg:
 		log.Printf("SearchModel: fileContentMsg received for %s. Content length: %d", msg.Path, len(msg.Content))
-		// File content loaded. Update the corresponding FileItem.
 		found := false
 		for i := range m.results {
 			if m.results[i].Path == msg.Path {
@@ -332,14 +500,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			log.Printf("SearchModel: WARNING - fileContentMsg for %s received, but file not found in current results slice.", msg.Path)
 		}
 
-		// If preview is active and the loaded content is for the currently selected file, update preview.
 		if m.showPreview && m.cursor >= 0 && m.cursor < len(m.results) && m.results[m.cursor].Path == msg.Path {
 			m.preview = msg.Content
 			log.Printf("SearchModel: Preview updated for %s.", msg.Path)
 		}
 
-		// VERY IMPORTANT: Now that content is loaded, inform the App model with the updated FileItem.
-		// This handles the case where the file was newly tagged and its content just arrived.
 		cmds = append(cmds, func() tea.Msg {
 			return TaggedFilesMsg(m.GetTaggedFiles())
 		})
@@ -353,6 +518,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Printf("SearchModel: Error displayed in preview for %s.", msg.Path)
 	}
 
+	// Any KeyMsg not handled above should be passed to the resultsViewport for scrolling
+	// This ensures j/k/ctrl+u/ctrl+d/pageup/pagedown keys work for results scrolling.
+	if _, isKeyMsg := msg.(tea.KeyMsg); isKeyMsg {
+		m.resultsViewport, cmd = m.resultsViewport.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+
 	return m, tea.Batch(cmds...)
 }
 
@@ -361,37 +533,48 @@ func (m *SearchModel) View() string {
 	// Search input section
 	searchSection := lipgloss.JoinVertical(
 		lipgloss.Left,
-		lipgloss.NewStyle().Bold(true).Render("🔍 Search Files (Real-time)"),
+		lipgloss.NewStyle().Bold(true).Render("🔍 Fuzzy Search Files"),
 		"",
 		m.textInput.View(),
 		"",
-		styles.HelpStyle.Render("Type to search • Ctrl+N/Ctrl+P: Navigate • Ctrl+A: Tag/Untag • Enter: Preview"),
+		styles.HelpStyle.Render("Type to fuzzy search (auto-updates) • Ctrl+N/Ctrl+P: Navigate • Ctrl+A: Tag/Untag • Enter: Preview Selected • j/k: Scroll Line • Ctrl+U/Ctrl+D: Scroll Half Page • PageUp/PageDown: Scroll Full Page • Mouse Wheel"),
 	)
 
-	// Section for displaying any errors.
-	var errorSection string
-	if m.err != nil {
-		errorSection = lipgloss.NewStyle().
+	// Section for displaying any errors or fzf status.
+	var statusSection string
+	if m.querying {
+		statusSection = lipgloss.NewStyle().
+			Foreground(styles.MutedColor).
+			Padding(0, 1).
+			Render("Fuzzy searching and loading content...")
+	} else if m.err != nil {
+		statusSection = lipgloss.NewStyle().
 			Foreground(styles.ErrorColor).
 			Padding(0, 1).
 			Render(fmt.Sprintf("Error: %s", m.err.Error()))
-	} else if m.querying {
-		errorSection = lipgloss.NewStyle().
+	} else if len(m.results) == 0 && m.textInput.Value() != "" {
+		statusSection = lipgloss.NewStyle().
 			Foreground(styles.MutedColor).
 			Padding(0, 1).
-			Render("Searching...")
+			Render("No fuzzy matches found for your query.")
+	} else if len(m.results) > 0 {
+		statusSection = lipgloss.NewStyle().
+			Foreground(styles.MutedColor).
+			Padding(0, 1).
+			Render(fmt.Sprintf("Found %d fuzzy matches.", len(m.results)))
 	}
 
 	// Results section
 	var resultsSection string
-	if len(m.results) > 0 {
-		resultsTitle := lipgloss.NewStyle().Bold(true).Render("📄 Search Results")
+	resultsTitle := lipgloss.NewStyle().Bold(true).Render("📄 Fuzzy Search Results")
 
-		var resultsList []string
+	var resultsContentBuilder strings.Builder
+	if len(m.results) > 0 {
 		for i, fileItem := range m.results {
 			var style lipgloss.Style
 			cursor := "  "
 
+			// Highlight the currently selected item
 			if i == m.cursor {
 				cursor = "▶ "
 				if fileItem.Tagged {
@@ -410,33 +593,35 @@ func (m *SearchModel) View() string {
 				tag = "✓ "
 			}
 
-			line := cursor + tag + fileItem.Path
-			resultsList = append(resultsList, style.Render(line))
+			// Render the line with its style and append to builder
+			resultsContentBuilder.WriteString(style.Render(cursor + tag + fileItem.Path))
+			resultsContentBuilder.WriteString("\n")
 		}
-
-		resultsContent := lipgloss.JoinVertical(lipgloss.Left, resultsList...)
-
-		resultsSection = lipgloss.JoinVertical(
-			lipgloss.Left,
-			"",
-			resultsTitle,
-			"",
-			resultsContent,
-		)
-	} else if m.textInput.Value() != "" && m.err == nil && !m.querying {
-		resultsSection = lipgloss.NewStyle().
-			Foreground(styles.MutedColor).
-			Padding(0, 1).
-			Render("No files match your search pattern.")
+	} else if m.textInput.Value() == "" && !m.querying && m.err == nil {
+		resultsContentBuilder.WriteString(lipgloss.NewStyle().Foreground(styles.MutedColor).Padding(0, 1).Render("Start typing to search..."))
+		resultsContentBuilder.WriteString("\n")
 	}
 
+	// Set the content to the viewport (always, even if empty to clear previous)
+	m.resultsViewport.SetContent(resultsContentBuilder.String())
+
+	resultsSection = lipgloss.JoinVertical(
+		lipgloss.Left,
+		"",
+		resultsTitle,
+		"",
+		m.resultsViewport.View(), // Render the viewport
+	)
+
+	// Combine left panel (search input, status, results)
 	leftPanel := lipgloss.JoinVertical(
 		lipgloss.Left,
 		searchSection,
-		errorSection,
+		statusSection,
 		resultsSection,
 	)
 
+	// If preview is shown, create two-column layout
 	if m.showPreview && m.preview != "" {
 		previewTitle := lipgloss.NewStyle().Bold(true).Render(
 			fmt.Sprintf("👁 Preview: %s", m.results[m.cursor].Path),
