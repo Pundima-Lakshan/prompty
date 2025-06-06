@@ -18,6 +18,22 @@ Prompty is a command-line interface (CLI) tool designed to help you quickly asse
 
 The idea is to streamline the process of providing context (like code snippets, configuration files, or documentation) to an LLM, making your interactions more efficient and effective.
 
+### 🔍 Search View
+
+![Search View](docs/images/search.png)
+
+### 🗂️ Browse View
+
+![Browse View](docs/images/browse.png)
+
+### 📝 Compose View
+
+![Compose View](docs/images/compose.png)
+
+### ✂️ Part of Prompt View
+
+![Part of Prompt View](docs/images/part_of_prompt.png)
+
 ---
 
 ## Features
