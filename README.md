@@ -1,31 +1,41 @@
-Prompty: AI-Crafted Prompt Generation Tool
-Hey there! 👋 Just a heads-up right away: this entire application even the README.md, Prompty, was fully coded by AI. As the "human" behind this project, my role was purely high-level guidance. My main goal was just to get this project done as quickly as possible, and the AI delivered!
+# Prompty: AI-Crafted Prompt Generation Tool
 
-What is Prompty?
+Hey there! 👋 Just a heads-up right away: this entire application, **Prompty**, was **fully coded by AI**. As the "human" behind this project, my role was purely high-level guidance. My main goal was just to get this project done as quickly as possible, and the AI delivered!
+
+---
+
+## What is Prompty?
+
 Prompty is a command-line interface (CLI) tool designed to help you quickly assemble prompts for Large Language Models (LLMs). It acts as your intelligent assistant, allowing you to:
 
-Fuzzy Search Files: Effortlessly find relevant files within your project using a fast, interactive fuzzy search.
+- **Fuzzy Search Files:** Effortlessly find relevant files within your project using a fast, interactive fuzzy search.
 
-Tag Files: Mark specific files for inclusion in your prompt. These tagged files persist across searches, so you won't lose track of them.
+- **Tag Files:** Mark specific files for inclusion in your prompt. These tagged files persist across searches, so you won't lose track of them.
 
-Generate Prompts: Combine your natural language prompt with the content of your tagged files into a structured, ready-to-use input for an LLM.
+- **Generate Prompts:** Combine your natural language prompt with the content of your tagged files into a structured, ready-to-use input for an LLM.
 
 The idea is to streamline the process of providing context (like code snippets, configuration files, or documentation) to an LLM, making your interactions more efficient and effective.
 
-Features
-⚡ Fast Fuzzy Search: Powered by fzf for quick file discovery.
+---
 
-🏷️ Persistent Tagging: Tagged files remain selected even after new searches, until you explicitly untag them.
+## Features
 
-📄 Content Inclusion: Automatically embeds the content of tagged files into your generated prompt.
+- ⚡ **Fast Fuzzy Search:** Powered by `fzf` for quick file discovery.
 
-📝 Prompt Composition: Write your main prompt text.
+- 🏷️ **Persistent Tagging:** Tagged files remain selected even after new searches, until you explicitly untag them.
 
-📋 Clipboard Integration: Easily copy the generated prompt to your clipboard.
+- 📄 **Content Inclusion:** Automatically embeds the content of tagged files into your generated prompt.
 
-💻 Terminal-Based UI: Built with Bubble Tea for a responsive and intuitive text-based user interface.
+- 📝 **Prompt Composition:** Write your main prompt text.
 
-Folder Structure
+- 📋 **Clipboard Integration:** Easily copy the generated prompt to your clipboard.
+
+- 💻 **Terminal-Based UI:** Built with Bubble Tea for a responsive and intuitive text-based user interface.
+
+---
+
+## Folder Structure
+
 Here's a quick overview of the project's directory layout:
 
 prompty/
@@ -42,94 +52,124 @@ prompty/
 │ └── styles.go # Defines all the Lipgloss styles for the UI
 └── main.go # Entry point of the application
 
-Prerequisites
+---
+
+## Prerequisites
+
 Before you can run Prompty, you'll need the following installed on your system:
 
-Go (1.18 or higher): The programming language this application is built with.
+- **Go (1.18 or higher):** The programming language this application is built with.
 
-Download Go
+  - [Download Go](https://go.dev/doc/install)
 
-fzf: A command-line fuzzy finder. Essential for the interactive file search.
+- **`fzf`:** A command-line fuzzy finder. Essential for the interactive file search.
 
-Install fzf
+  - [Install fzf](https://github.com/junegunn/fzf#installation)
 
-ripgrep (or rg): A fast line-oriented search tool. Used by Prompty to efficiently list files.
+- **`ripgrep` (or `rg`):** A fast line-oriented search tool. Used by Prompty to efficiently list files.
+  - [Install ripgrep](https://github.com/BurntSushi/ripgrep#installation)
 
-Install ripgrep
+---
 
-Getting Started
+## Getting Started
+
 Follow these steps to get Prompty up and running:
 
-Clone the Repository:
+1. **Clone the Repository:**
 
-git clone <https://github.com/your-username/prompty.git> # Replace with your repo URL
-cd prompty
+    ```bash
+    git clone [https://github.com/your-username/prompty.git](https://github.com/your-username/prompty.git) # Replace with your repo URL
+    cd prompty
+    ```
 
-Download Go Modules:
-This command resolves and downloads all necessary Go dependencies.
+2. **Download Go Modules:**
+    This command resolves and downloads all necessary Go dependencies.
 
-go mod tidy
+    ```bash
+    go mod tidy
+    ```
 
-Run the Application:
-You can run Prompty directly from its directory.
+3. **Run the Application:**
+    You can run Prompty directly from its directory.
 
-go run main.go
+    ```bash
+    go run main.go
+    ```
 
-You should see the Prompty CLI application launch in your terminal!
+    You should see the Prompty CLI application launch in your terminal!
 
-Usage
-Once running, navigate through the tabs (Search, Browse, Compose) using 1, 2, 3, Tab, or Shift+Tab.
+---
 
-Search Tab (Tab 1)
-Type to Search: Start typing in the input box to fuzzy search for files in your current directory and its subdirectories.
+## Usage
 
-Navigate Results: Use Ctrl+N (down) and Ctrl+P (up) or j/k to move through the search results.
+Once running, navigate through the tabs (Search, Browse, Compose) using `1`, `2`, `3`, `Tab`, or `Shift+Tab`.
 
-Tag/Untag: Press Ctrl+A to tag or untag the currently selected file. Tagged files will have a ✓ next to them.
+### Search Tab (Tab 1)
 
-Clear Search: Press Esc to clear your search query. If the query is empty, pressing Esc will show all currently tagged files.
+- **Type to Search:** Start typing in the input box to fuzzy search for files in your current directory and its subdirectories.
 
-Browse Tab (Tab 2)
-This tab displays all the files you've tagged across your searches.
+- **Navigate Results:** Use `Ctrl+N` (down) and `Ctrl+P` (up) or `j`/`k` to move through the search results.
 
-Navigate Files: Use Ctrl+N (down) and Ctrl+P (up) or j/k to move through your tagged files.
+- **Tag/Untag:** Press `Ctrl+A` to tag or untag the currently selected file. Tagged files will have a `✓` next to them.
 
-Preview Content: Press Enter on a selected file to view its content in a side panel. Press Esc to close the preview.
+- **Clear Search:** Press `Esc` to clear your search query. If the query is empty, pressing `Esc` will show all currently tagged files.
 
-Untag File: Press Ctrl+A to untag the currently selected file from this list.
+### Browse Tab (Tab 2)
 
-Compose Tab (Tab 3)
-Your Prompt: Enter your main request or question for the LLM in the text area.
+- This tab displays all the files you've tagged across your searches.
 
-Generate Prompt: Press Ctrl+G to combine your text with the content of all your tagged files. The generated output will appear in a scrollable viewport.
+- **Navigate Files:** Use `Ctrl+N` (down) and `Ctrl+P` (up) or `j`/`k` to move through your tagged files.
 
-Copy to Clipboard: When viewing the generated prompt, press Y to copy it to your system clipboard.
+- **Preview Content:** Press `Enter` on a selected file to view its content in a side panel. Press `Esc` to close the preview.
 
-Back to Editing: Press Esc to hide the generated prompt and return to the editing area.
+- **Untag File:** Press `Ctrl+A` to untag the currently selected file from this list.
 
-Quitting the Application
-Press Ctrl+Q or Ctrl+C at any time to exit Prompty.
+### Compose Tab (Tab 3)
 
-Tested On
-This application has primarily been tested on Linux environments. While it uses cross-platform Go libraries, fzf and ripgrep are external dependencies. Ensure they are correctly installed and configured for your operating system.
+- **Your Prompt:** Enter your main request or question for the LLM in the text area.
 
-Making Prompty Globally Accessible
-To run prompty from any directory in your terminal, you can install the executable to your Go bin path:
+- **Generate Prompt:** Press `Ctrl+G` to combine your text with the content of all your tagged files. The generated output will appear in a scrollable viewport.
 
-Ensure Go Bin is in your PATH:
-Make sure your GOPATH/bin directory is added to your system's PATH environment variable. For most Go installations, this is already set up. You can check by running echo $PATH and looking for something like /home/youruser/go/bin (on Linux/macOS) or C:\Users\youruser\go\bin (on Windows). If it's not, you might need to add it to your shell's configuration file (e.g., .bashrc, .zshrc, .profile):
+- **Copy to Clipboard:** When viewing the generated prompt, press `Y` to copy it to your system clipboard.
 
-echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.bashrc # or .zshrc/.profile
-source ~/.bashrc # or source your config file
+- **Back to Editing:** Press `Esc` to hide the generated prompt and return to the editing area.
 
-Install the Executable:
-Navigate to the root directory of the prompty project (where main.go is located) and run:
+### Quitting the Application
 
-go install
+- Press `Ctrl+Q` or `Ctrl+C` at any time to exit Prompty.
 
-This command compiles your application and places the executable binary (named prompty) into your $GOPATH/bin directory.
+---
 
-Run from Anywhere:
-Now you can simply type prompty in your terminal from any location:
+## Tested On
 
-prompty
+This application has primarily been tested on **Linux** environments. While it uses cross-platform Go libraries, `fzf` and `ripgrep` are external dependencies. Ensure they are correctly installed and configured for your operating system.
+
+---
+
+## Making Prompty Globally Accessible
+
+To run `prompty` from any directory in your terminal, you can install the executable to your Go bin path:
+
+1. **Ensure Go Bin is in your PATH:**
+    Make sure your `GOPATH/bin` directory is added to your system's `PATH` environment variable. For most Go installations, this is already set up. You can check by running `echo $PATH` and looking for something like `/home/youruser/go/bin` (on Linux/macOS) or `C:\Users\youruser\go\bin` (on Windows). If it's not, you might need to add it to your shell's configuration file (e.g., `.bashrc`, `.zshrc`, `.profile`):
+
+    ```bash
+    echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.bashrc # or .zshrc/.profile
+    source ~/.bashrc # or source your config file
+    ```
+
+2. **Install the Executable:**
+    Navigate to the root directory of the `prompty` project (where `main.go` is located) and run:
+
+    ```bash
+    go install
+    ```
+
+    This command compiles your application and places the executable binary (named `prompty`) into your `$GOPATH/bin` directory.
+
+3. **Run from Anywhere:**
+    Now you can simply type `prompty` in your terminal from any location:
+
+    ```bash
+    prompty
+    ```
