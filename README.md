@@ -1,6 +1,8 @@
 # Prompty: AI-Crafted Prompt Generation Tool
 
-Hey there! 👋 Just a heads-up right away: this entire application, **Prompty**, was **fully coded by AI**. As the "human" behind this project, my role was purely high-level guidance. My main goal was just to get this project done as quickly as possible, and the AI delivered!
+> Vibe Coded Use At Your Own Risk! ⚠️
+
+Hey there! 👋 Just a heads-up right away: this entire application, **Prompty**, as event this README was **fully coded by AI**. As the "human" behind this project, my role was purely high-level guidance. My main goal was just to get this project done as quickly as possible, and the AI delivered!
 
 ---
 
