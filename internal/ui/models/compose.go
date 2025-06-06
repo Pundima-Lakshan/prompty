@@ -8,6 +8,7 @@ import (
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport" // Added: Import the viewport library
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -18,6 +19,7 @@ type ComposeModel struct {
 	selectedFiles []FileItem
 	finalPrompt   string
 	showOutput    bool
+	viewport      viewport.Model // Added: Viewport for scrollable output
 }
 
 // Init initializes the compose model
@@ -30,14 +32,20 @@ func NewComposeModel() *ComposeModel {
 	ta := textarea.New()
 	ta.Placeholder = "Enter your prompt here...\n\nExample: 'Please review this code and suggest improvements'"
 	ta.Focus()
+	// Initial arbitrary dimensions for textarea, will be updated by WindowSizeMsg
 	ta.SetWidth(80)
 	ta.SetHeight(8)
+
+	// Initialize viewport with arbitrary dimensions, will be updated by WindowSizeMsg
+	vp := viewport.New(80, 20)
+	vp.HighPerformanceRendering = false // Can set to true for performance, but might redraw more often
 
 	return &ComposeModel{
 		textarea:      ta,
 		selectedFiles: []FileItem{}, // Populated by App model
 		finalPrompt:   "",
 		showOutput:    false,
+		viewport:      vp, // Initialize the viewport
 	}
 }
 
@@ -58,9 +66,47 @@ func (m *ComposeModel) SetSelectedFiles(files []FileItem) tea.Cmd {
 // Update handles compose model updates
 func (m *ComposeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+	var cmds []tea.Cmd // To batch commands
 	log.Printf("ComposeModel Update received message: %T", msg)
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		log.Printf("ComposeModel: WindowSizeMsg received. Width: %d, Height: %d", msg.Width, msg.Height)
+		// Calculate available dimensions for content area (adjust for borders/padding of BaseStyle and internal UI)
+		// Assuming BaseStyle takes up 2 units on each side (border + padding) and other UI elements
+		contentWidth := msg.Width - 4 // For overall BaseStyle padding/borders
+
+		// Estimate height used by fixed UI elements in the compose tab (titles, help, spacing)
+		// Selected files section: depends on number of files, but has a title and spacer
+		// Prompt input section: title and spacer
+		// Bottom help: one line
+		// Let's reserve 10 lines for these fixed elements as a rough estimate
+		minFixedUiHeight := 10 // Approximate fixed height for titles, help, spacers
+
+		availableContentHeight := msg.Height - minFixedUiHeight
+		if availableContentHeight < 5 { // Ensure minimum height
+			availableContentHeight = 5
+		}
+
+		if !m.showOutput {
+			// When in input mode, adjust textarea size
+			m.textarea.SetWidth(contentWidth)
+			// Textarea height is a fixed proportion or minimum
+			m.textarea.SetHeight(availableContentHeight / 2) // Example: half of available content height
+			log.Printf("ComposeModel: Resized textarea to W:%d H:%d", m.textarea.Width(), m.textarea.Height())
+		} else {
+			// When in output mode, adjust viewport size
+			m.viewport.Width = contentWidth
+			m.viewport.Height = availableContentHeight
+			log.Printf("ComposeModel: Resized viewport to W:%d H:%d", m.viewport.Width, m.viewport.Height)
+		}
+		// Also update textarea and viewport with the WindowSizeMsg so they can re-render internally
+		m.textarea, cmd = m.textarea.Update(msg)
+		cmds = append(cmds, cmd)
+		m.viewport, cmd = m.viewport.Update(msg)
+		cmds = append(cmds, cmd)
+		return m, tea.Batch(cmds...)
+
 	case tea.KeyMsg:
 		log.Printf("ComposeModel: KeyMsg received: %s (Type: %d)", msg.String(), msg.Type)
 		switch msg.String() {
@@ -92,8 +138,16 @@ func (m *ComposeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	m.textarea, cmd = m.textarea.Update(msg)
-	return m, cmd
+	// Delegate messages to active sub-components
+	if m.showOutput {
+		m.viewport, cmd = m.viewport.Update(msg)
+		cmds = append(cmds, cmd)
+	} else {
+		m.textarea, cmd = m.textarea.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+
+	return m, tea.Batch(cmds...)
 }
 
 // generatePrompt creates the final prompt with selected files
@@ -127,7 +181,9 @@ func (m *ComposeModel) generatePrompt() {
 	}
 
 	m.finalPrompt = builder.String()
-	log.Printf("ComposeModel: Final prompt generated. Total length: %d", len(m.finalPrompt))
+	// Set the generated prompt content to the viewport
+	m.viewport.SetContent(m.finalPrompt)
+	log.Printf("ComposeModel: Final prompt generated. Total length: %d. Viewport content set.", len(m.finalPrompt))
 }
 
 // View renders the compose interface
@@ -182,28 +238,23 @@ func (m *ComposeModel) View() string {
 	)
 }
 
-// renderOutput shows the final generated prompt
+// renderOutput shows the final generated prompt with scrollable viewport
 func (m *ComposeModel) renderOutput() string {
 	title := lipgloss.NewStyle().Bold(true).Render("🎯 Generated Prompt")
 
-	content := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(styles.SecondaryColor).
-		Padding(1).
-		Width(100).
-		Height(20).
-		Render(m.finalPrompt)
+	// Render the viewport instead of direct string content
+	contentView := m.viewport.View()
 
-	// Updated help text to include 'Y' for copy
+	// Updated help text to include 'Y' for copy and scrolling
 	help := styles.HelpStyle.Render(
-		"Y: Copy • Esc: Back to editing",
+		"Y: Copy • Esc: Back to editing • Scroll with Up/Down Arrows, PageUp/PageDown",
 	)
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		title,
 		"",
-		content,
+		contentView, // Use the viewport's rendered content
 		"",
 		help,
 	)
