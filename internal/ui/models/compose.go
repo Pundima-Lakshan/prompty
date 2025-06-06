@@ -8,7 +8,7 @@ import (
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport" // Added: Import the viewport library
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -19,7 +19,7 @@ type ComposeModel struct {
 	selectedFiles []FileItem
 	finalPrompt   string
 	showOutput    bool
-	viewport      viewport.Model // Added: Viewport for scrollable output
+	viewport      viewport.Model // Viewport for scrollable output
 }
 
 // Init initializes the compose model
@@ -39,6 +39,7 @@ func NewComposeModel() *ComposeModel {
 	// Initialize viewport with arbitrary dimensions, will be updated by WindowSizeMsg
 	vp := viewport.New(80, 20)
 	vp.HighPerformanceRendering = false // Can set to true for performance, but might redraw more often
+	vp.MouseWheelEnabled = false        // Removed: Disabled mouse wheel scrolling
 
 	return &ComposeModel{
 		textarea:      ta,
@@ -136,10 +137,18 @@ func (m *ComposeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+		// Removed: case tea.MouseMsg: // Handle mouse events for viewport
+		// Removed: 	log.Printf("ComposeModel: MouseMsg received: %s", msg.String())
+		// Removed: 	if m.showOutput { // Only process mouse events for viewport if output is shown
+		// Removed: 		m.viewport, cmd = m.viewport.Update(msg)
+		// Removed: 		cmds = append(cmds, cmd)
+		// Removed: 	}
 	}
 
 	// Delegate messages to active sub-components
 	if m.showOutput {
+		// Pass all remaining messages to the viewport (including j, k, ctrl+u, ctrl+d, pageup, pagedown)
+		// Mouse messages are no longer delegated here, as they are now handled by the removal above.
 		m.viewport, cmd = m.viewport.Update(msg)
 		cmds = append(cmds, cmd)
 	} else {
@@ -245,9 +254,9 @@ func (m *ComposeModel) renderOutput() string {
 	// Render the viewport instead of direct string content
 	contentView := m.viewport.View()
 
-	// Updated help text to include 'Y' for copy and scrolling
+	// Updated help text to remove mouse wheel and clarify scrolling
 	help := styles.HelpStyle.Render(
-		"Y: Copy • Esc: Back to editing • Scroll with Up/Down Arrows, PageUp/PageDown",
+		"Y: Copy • Esc: Back to editing • Use Up/Down Arrows, j/k: Scroll Line • Ctrl+U/Ctrl+D: Scroll Half Page • PageUp/PageDown: Scroll Full Page",
 	)
 
 	return lipgloss.JoinVertical(
