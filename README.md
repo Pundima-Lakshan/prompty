@@ -38,19 +38,21 @@ The idea is to streamline the process of providing context (like code snippets, 
 
 Here's a quick overview of the project's directory layout:
 
+```
 prompty/
 ├── internal/
-│ ├── search/
-│ │ └── ripgrep.go # Handles interaction with ripgrep (rg) for file listing
-│ └── ui/
-│ ├── models/
-│ │ ├── app.go # The main application model, manages states (tabs)
-│ │ ├── browse.go # Model for managing and untagging selected files
-│ │ ├── compose.go # Model for user prompt input and final prompt generation
-│ │ └── search.go # Model for fuzzy searching and tagging files
-│ └── styles/
-│ └── styles.go # Defines all the Lipgloss styles for the UI
-└── main.go # Entry point of the application
+│   ├── search/
+│   │   └── ripgrep.go       # Handles interaction with ripgrep (rg) for file listing
+│   └── ui/
+│       ├── models/
+│       │   ├── app.go       # The main application model, manages states (tabs)
+│       │   ├── browse.go    # Model for managing and untagging selected files
+│       │   ├── compose.go   # Model for user prompt input and final prompt generation
+│       │   └── search.go    # Model for fuzzy searching and tagging files
+│       └── styles/
+│           └── styles.go    # Defines all the Lipgloss styles for the UI
+└── main.go                 # Entry point of the application
+```
 
 ---
 
@@ -77,26 +79,26 @@ Follow these steps to get Prompty up and running:
 
 1. **Clone the Repository:**
 
-    ```bash
-    git clone [https://github.com/your-username/prompty.git](https://github.com/your-username/prompty.git) # Replace with your repo URL
-    cd prompty
-    ```
+   ```bash
+   git clone [https://github.com/your-username/prompty.git](https://github.com/your-username/prompty.git) # Replace with your repo URL
+   cd prompty
+   ```
 
 2. **Download Go Modules:**
-    This command resolves and downloads all necessary Go dependencies.
+   This command resolves and downloads all necessary Go dependencies.
 
-    ```bash
-    go mod tidy
-    ```
+   ```bash
+   go mod tidy
+   ```
 
 3. **Run the Application:**
-    You can run Prompty directly from its directory.
+   You can run Prompty directly from its directory.
 
-    ```bash
-    go run main.go
-    ```
+   ```bash
+   go run main.go
+   ```
 
-    You should see the Prompty CLI application launch in your terminal!
+   You should see the Prompty CLI application launch in your terminal!
 
 ---
 
@@ -151,25 +153,25 @@ This application has primarily been tested on **Linux** environments. While it u
 To run `prompty` from any directory in your terminal, you can install the executable to your Go bin path:
 
 1. **Ensure Go Bin is in your PATH:**
-    Make sure your `GOPATH/bin` directory is added to your system's `PATH` environment variable. For most Go installations, this is already set up. You can check by running `echo $PATH` and looking for something like `/home/youruser/go/bin` (on Linux/macOS) or `C:\Users\youruser\go\bin` (on Windows). If it's not, you might need to add it to your shell's configuration file (e.g., `.bashrc`, `.zshrc`, `.profile`):
+   Make sure your `GOPATH/bin` directory is added to your system's `PATH` environment variable. For most Go installations, this is already set up. You can check by running `echo $PATH` and looking for something like `/home/youruser/go/bin` (on Linux/macOS) or `C:\Users\youruser\go\bin` (on Windows). If it's not, you might need to add it to your shell's configuration file (e.g., `.bashrc`, `.zshrc`, `.profile`):
 
-    ```bash
-    echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.bashrc # or .zshrc/.profile
-    source ~/.bashrc # or source your config file
-    ```
+   ```bash
+   echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.bashrc # or .zshrc/.profile
+   source ~/.bashrc # or source your config file
+   ```
 
 2. **Install the Executable:**
-    Navigate to the root directory of the `prompty` project (where `main.go` is located) and run:
+   Navigate to the root directory of the `prompty` project (where `main.go` is located) and run:
 
-    ```bash
-    go install
-    ```
+   ```bash
+   go install
+   ```
 
-    This command compiles your application and places the executable binary (named `prompty`) into your `$GOPATH/bin` directory.
+   This command compiles your application and places the executable binary (named `prompty`) into your `$GOPATH/bin` directory.
 
 3. **Run from Anywhere:**
-    Now you can simply type `prompty` in your terminal from any location:
+   Now you can simply type `prompty` in your terminal from any location:
 
-    ```bash
-    prompty
-    ```
+   ```bash
+   prompty
+   ```
