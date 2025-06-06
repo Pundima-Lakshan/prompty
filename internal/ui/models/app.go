@@ -82,7 +82,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Handle global key presses (like Ctrl+C for quit, or tab navigation).
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			// Quit the application.
 			return m, tea.Quit
 
@@ -203,7 +203,8 @@ func (m *App) View() string {
 	}
 
 	// Render the global help text.
-	help := styles.HelpStyle.Render("1,2,3: Jump to tab • Tab/Shift+Tab: Navigate • q/Ctrl+C: Quit")
+	// Updated to reflect Ctrl+Q as quit key
+	help := styles.HelpStyle.Render("1,2,3: Jump to tab • Tab/Shift+Tab: Navigate • Ctrl+Q/Ctrl+C: Quit")
 
 	// Join all elements vertically to form the complete application layout.
 	main := lipgloss.JoinVertical(
@@ -272,7 +273,7 @@ func (m *App) renderTabs() string {
 	tabBar := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
 
 	// Add a hint for keyboard shortcuts to jump to tabs.
-	shortcutHint := styles.HelpStyle.Render("  1,2,3: Jump to tab")
+	shortcutHint := styles.HelpStyle.Render("   1,2,3: Jump to tab")
 	tabBarWithHint := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		tabBar,
