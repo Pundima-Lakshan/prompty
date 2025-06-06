@@ -2,7 +2,7 @@ package models
 
 import (
 	"fmt"
-	"log"                     // Re-enabled logging
+	"log"
 	"prompty/internal/search" // Added: Import for search.RipgrepMatch
 	"prompty/internal/ui/styles"
 

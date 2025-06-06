@@ -3,8 +3,10 @@ package search
 import (
 	"bytes"
 	"fmt"
+	"os" // Added for os.PathSeparator
 	"os/exec"
-	"strconv" // For converting string to int
+	"path/filepath" // Added for filepath.Clean
+	"strconv"
 	"strings"
 )
 
@@ -57,36 +59,38 @@ func RunRipgrep(pattern string, dir string) ([]RipgrepMatch, error) {
 		// Parse each line, which should be in the format: {file}:{line}:{col}:{match_text}
 		parts := strings.SplitN(line, ":", 4)
 		if len(parts) != 4 {
-			// If a line doesn't conform to the expected format, log a warning and skip it.
-			// This can happen for non-match lines or unexpected ripgrep output variations.
-			// log.Printf("Warning: Could not parse ripgrep output line: %s", line)
-			continue
+			continue // Skip lines that don't conform to the expected format
 		}
 
 		file := parts[0]
 		lineNum, err := strconv.Atoi(parts[1]) // Convert line number string to integer
 		if err != nil {
-			// Handle parsing error for line number
-			// log.Printf("Warning: Could not parse line number '%s': %v", parts[1], err)
 			continue
 		}
 		colNum, err := strconv.Atoi(parts[2]) // Convert column number string to integer
 		if err != nil {
-			// Handle parsing error for column number
-			// log.Printf("Warning: Could not parse column number '%s': %v", parts[2], err)
 			continue
 		}
-		matchText := parts[3] // The actual text that ripgrep matched
+		matchText := parts[3]
 
-		// Append the parsed match to our slice of RipgrepMatch.
-		// Note: 'Text' is currently the matched portion. For displaying full file content later,
-		// we'll need to read the entire file separately.
+		// --- IMPORTANT FIX: Normalize file path ---
+		// If the file path returned by ripgrep starts with the base directory
+		// (which happens if ripgrep returns absolute paths or paths relative to
+		// the root but containing our project root), make it truly relative.
+		cleanDir := filepath.Clean(dir)
+		if strings.HasPrefix(file, cleanDir) {
+			file = strings.TrimPrefix(file, cleanDir)
+			// Remove any leading path separator that might remain after trimming the prefix
+			file = strings.TrimPrefix(file, string(os.PathSeparator))
+		}
+		// --- END IMPORTANT FIX ---
+
 		matches = append(matches, RipgrepMatch{
 			File:  file,
 			Line:  lineNum,
 			Col:   colNum,
-			Text:  matchText, // 'Text' here refers to the match's context/preview
-			Match: matchText, // 'Match' is the exact matched string
+			Text:  matchText,
+			Match: matchText,
 		})
 	}
 

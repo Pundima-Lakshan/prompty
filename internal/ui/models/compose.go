@@ -2,7 +2,7 @@ package models
 
 import (
 	"fmt"
-	"log" // Re-enabled logging
+	"log"
 	"prompty/internal/ui/styles"
 	"strings"
 
@@ -58,7 +58,7 @@ func (m *ComposeModel) SetSelectedFiles(files []FileItem) tea.Cmd {
 // Update handles compose model updates
 func (m *ComposeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	log.Printf("ComposeModel Update received message: %T", msg) // Log all incoming messages
+	log.Printf("ComposeModel Update received message: %T", msg)
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -84,9 +84,6 @@ func (m *ComposeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				err := clipboard.WriteAll(m.finalPrompt)
 				if err != nil {
 					log.Printf("ComposeModel: Error copying to clipboard: %v", err)
-					// In a real application, you might want to show an error message to the user
-					// For now, we'll just acknowledge the attempt.
-					// You could add a temporary status message to the model for this.
 				} else {
 					log.Printf("ComposeModel: Prompt copied to clipboard successfully.")
 				}
