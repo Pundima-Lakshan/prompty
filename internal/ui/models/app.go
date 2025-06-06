@@ -145,14 +145,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, composeCmd // Otherwise, just update ComposeModel.
 
 	case UntagFileMsg: // Message received from BrowseModel when a file is untagged.
-		// Find the file in SearchModel's results and update its tagged status.
-		// This ensures SearchModel remains the source of truth for all file tags.
-		for i := range m.searchModel.results {
-			if m.searchModel.results[i].Path == msg.Path {
-				m.searchModel.results[i].Tagged = false
-				break
-			}
-		}
+		// Call the new method in SearchModel to update its persistent tagged files list.
+		m.searchModel.UntagFileByPath(msg.Path)
 		// Re-fetch tagged files from SearchModel to update currentTaggedFiles.
 		m.currentTaggedFiles = m.searchModel.GetTaggedFiles()
 		// Propagate the updated tagged files to ComposeModel and BrowseModel.

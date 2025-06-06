@@ -3,7 +3,7 @@ package models
 import (
 	"fmt"
 	"log"
-	"prompty/internal/search" // Added: Import for search.RipgrepMatch
+	"prompty/internal/search"
 	"prompty/internal/ui/styles"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,7 +19,7 @@ type FileItem struct {
 	// OriginalMatch is an optional field to store the RipgrepMatch that led to this file,
 	// useful for context but not directly used in prompt composition.
 	// We keep it here for completeness, though it's mainly populated in SearchModel.
-	OriginalMatch *search.RipgrepMatch // Uncommented: This field is needed by SearchModel
+	OriginalMatch *search.RipgrepMatch
 }
 
 // BrowseModel handles the display and management of *already tagged* files.
@@ -29,8 +29,6 @@ type BrowseModel struct {
 	cursor      int        // Index of the currently highlighted file
 	preview     string     // Content of the file currently being previewed
 	showPreview bool       // Flag to indicate if the file preview is active
-	// baseDir is not strictly needed here as content is expected to be loaded by SearchModel
-	// baseDir     string
 }
 
 // Init initializes the browse model.
@@ -71,13 +69,13 @@ func (m *BrowseModel) SetTaggedFiles(files []FileItem) tea.Cmd {
 // Update handles messages for the BrowseModel.
 // It processes keyboard input for navigation, untagging, and previewing files.
 func (m *BrowseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd                                            // Placeholder for commands to be returned
+	var cmds []tea.Cmd                                         // To batch commands
 	log.Printf("BrowseModel Update received message: %T", msg) // Log all incoming messages
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		log.Printf("BrowseModel: KeyMsg received: %s (Type: %d, Mod: %d)", msg.String(), msg.Type)
-		switch msg.Type { // Changed from msg.String() to msg.Type
+		switch msg.Type {
 		case tea.KeyCtrlN: // Only Ctrl+N for navigating down
 			log.Printf("BrowseModel: Ctrl+N pressed (down).")
 			if len(m.files) > 0 {
@@ -123,28 +121,18 @@ func (m *BrowseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			log.Printf("BrowseModel: Preview closed via Esc.")
 		case tea.KeyCtrlA: // Ctrl+A for untagging
 			log.Printf("BrowseModel: Ctrl+A pressed (untag).")
-			// Toggle tag on current file (effectively untagging in this view).
 			if m.cursor >= 0 && m.cursor < len(m.files) {
 				if m.files[m.cursor].Tagged { // Only untag if it's currently tagged
-					m.files[m.cursor].Tagged = false // Mark as untagged (conceptually, for this model)
-					log.Printf("BrowseModel: Untagged file: %s", m.files[m.cursor].Path)
-
 					// Send a message to the App model so it can update the source of truth (SearchModel)
-					// and then update the ComposeModel.
-					cmds := []tea.Cmd{func() tea.Msg {
+					// and then update the ComposeModel and *this* BrowseModel.
+					cmds = append(cmds, func() tea.Msg {
 						return UntagFileMsg{Path: m.files[m.cursor].Path}
-					}}
-					log.Printf("BrowseModel: Sent UntagFileMsg for %s.", m.files[m.cursor].Path)
+					})
+					log.Printf("BrowseModel: Sent UntagFileMsg for %s. Awaiting update from AppModel.", m.files[m.cursor].Path)
 
-					// Remove the untagged file from this list immediately for visual feedback
-					m.files = append(m.files[:m.cursor], m.files[m.cursor+1:]...)
-					if m.cursor >= len(m.files) && len(m.files) > 0 {
-						m.cursor = len(m.files) - 1
-					} else if len(m.files) == 0 {
-						m.cursor = 0
-					}
-					log.Printf("BrowseModel: File removed from list. New cursor: %d, list size: %d", m.cursor, len(m.files))
-					// If preview was active, clear it.
+					// DO NOT locally modify m.files here. The App model will re-set m.files
+					// via SetTaggedFiles with the correct, updated list.
+					// We can, however, clear the preview immediately for better UX.
 					m.showPreview = false
 					m.preview = ""
 					return m, tea.Batch(cmds...)
@@ -153,7 +141,7 @@ func (m *BrowseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	return m, cmd
+	return m, tea.Batch(cmds...) // Return batched commands if any
 }
 
 // View renders the browse interface.

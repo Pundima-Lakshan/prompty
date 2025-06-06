@@ -244,6 +244,29 @@ func (m *SearchModel) GetTaggedFiles() []FileItem {
 	return copiedFiles
 }
 
+// UntagFileByPath removes a file from the persistent allTaggedFiles list.
+func (m *SearchModel) UntagFileByPath(path string) {
+	log.Printf("SearchModel: Attempting to untag %s by path.", path)
+	newAllTaggedFiles := []FileItem{}
+	for _, taggedFile := range m.allTaggedFiles {
+		if taggedFile.Path != path {
+			newAllTaggedFiles = append(newAllTaggedFiles, taggedFile)
+		} else {
+			log.Printf("SearchModel: Found and removed %s from allTaggedFiles.", path)
+		}
+	}
+	m.allTaggedFiles = newAllTaggedFiles
+
+	// Also update the Tagged status in the currently displayed results if the file is present
+	for i := range m.results {
+		if m.results[i].Path == path {
+			m.results[i].Tagged = false
+			log.Printf("SearchModel: Updated tagged status for %s in current results to false.", path)
+			break
+		}
+	}
+}
+
 // Update handles messages for the SearchModel.
 func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -272,24 +295,16 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					if !foundInAllTagged {
-						// Need a deep copy of FileItem if it contains pointers/slices, but for string/bool, direct copy is fine.
 						// Ensure content is copied if available to the persistent store.
 						if fileToModify.Content == "" { // If content is not loaded yet, schedule it
 							cmds = append(cmds, m.loadFileContentCmd(fileToModify.Path))
 						}
-						m.allTaggedFiles = append(m.allTaggedFiles, *fileToModify)
+						m.allTaggedFiles = append(m.allTaggedFiles, *fileToModify) // Append a copy
 						log.Printf("SearchModel: Added %s to allTaggedFiles (persistent store).", fileToModify.Path)
 					}
 				} else {
 					// Remove from allTaggedFiles
-					newAllTaggedFiles := []FileItem{}
-					for _, taggedFile := range m.allTaggedFiles {
-						if taggedFile.Path != fileToModify.Path {
-							newAllTaggedFiles = append(newAllTaggedFiles, taggedFile)
-						}
-					}
-					m.allTaggedFiles = newAllTaggedFiles
-					log.Printf("SearchModel: Removed %s from allTaggedFiles (persistent store).", fileToModify.Path)
+					m.UntagFileByPath(fileToModify.Path) // Use the new untag method
 				}
 
 				// Always send message to App to update global tagged files
@@ -353,7 +368,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textInput.Width = usableContentWidth
 		m.resultsViewport.Width = usableContentWidth
 		m.resultsViewport.Height = availableResultsHeight
-		log.Printf("SearchModel: Resized text input to W:%d. Resized results viewport to W:%d H:%d",
+		log.Printf("SearchModel: Resized text input to W:%d H:%d",
 			m.textInput.Width, m.resultsViewport.Width, m.resultsViewport.Height)
 
 		// Delegate WindowSizeMsg to text input and viewport
@@ -372,8 +387,6 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				query := m.textInput.Value()
 				m.err = nil
 				m.querying = true
-				// Do NOT clear m.results here directly. The merge logic in FuzzySearchResultsMsg
-				// will handle preserving tagged files.
 				cmds = append(cmds, runFuzzySearchCmd(query, m.baseDir))
 				log.Printf("SearchModel: Triggering fuzzy search on Enter for query: '%s'.", query)
 			} else {
@@ -424,8 +437,6 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			query := m.textInput.Value()
 			m.err = nil
 			m.querying = true // Indicate search is active
-			// Do NOT clear m.results here directly. The merge logic in FuzzySearchResultsMsg
-			// will handle preserving tagged files.
 			cmds = append(cmds, runFuzzySearchCmd(query, m.baseDir))
 			log.Printf("SearchModel: Debounced fuzzy search triggered for query: '%s'.", query)
 		} else {
@@ -456,6 +467,15 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				seenPathsInCombined[p] = true                                      // Mark as seen
 				log.Printf("SearchModel: Added new fzf result: %s, scheduling content load.", p)
 			} else {
+				// If a file from fzf results is already tagged, ensure its Tagged status is true in m.results
+				// This might be redundant if the initial population from m.allTaggedFiles already set it correctly,
+				// but it acts as a safeguard.
+				for i := range newCombinedResults {
+					if newCombinedResults[i].Path == p {
+						newCombinedResults[i].Tagged = true // Ensure tagged status is true in displayed results
+						break
+					}
+				}
 				log.Printf("SearchModel: Skipping fzf result %s (already in combined results, likely tagged).", p)
 			}
 		}
@@ -557,7 +577,6 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fileContentErrorMsg:
 		log.Printf("SearchModel: fileContentErrorMsg received for %s: %v", msg.Path, msg.Err)
-		// No preview pane here to show the error directly to the user for file content.
 		// The error is logged. Update the content field to reflect the error if needed
 		// in m.results and m.allTaggedFiles to prevent re-attempts for this session.
 		for i := range m.results {
@@ -572,6 +591,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+		// Batch this command with the TaggedFilesMsg to ensure the App model is aware of changes
 		cmds = append(cmds, func() tea.Msg {
 			return TaggedFilesMsg(m.GetTaggedFiles())
 		})
