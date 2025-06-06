@@ -3,13 +3,14 @@ package models
 import (
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
-	"prompty/internal/search" // Import the ripgrep functionality
+	"prompty/internal/search"
 	"prompty/internal/ui/styles"
 	"sort"
 	"strings"
-	"time" // For debouncing
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,16 +42,16 @@ type fileContentErrorMsg struct {
 // SearchModel handles the search functionality, including the search input,
 // displaying results, and allowing navigation and tagging within those results.
 type SearchModel struct {
-	textInput      textinput.Model // Bubble Tea text input component for search query
-	results        []FileItem      // Stores the parsed results as FileItem, allowing tagging
-	cursor         int             // Index of the currently highlighted result
-	debounceTicker *time.Ticker    // Ticker for debouncing search queries
-	lastUpdate     time.Time       // Timestamp of the last text input update
-	querying       bool            // Flag to indicate if a search is in progress
-	err            error           // Stores any error that occurred during the search
-	baseDir        string          // The base directory for file paths
-	preview        string          // Content of the file currently being previewed
-	showPreview    bool            // Flag to indicate if the file preview is active
+	textInput      textinput.Model
+	results        []FileItem
+	cursor         int
+	debounceTicker *time.Ticker
+	lastUpdate     time.Time
+	querying       bool
+	err            error
+	baseDir        string
+	preview        string
+	showPreview    bool
 }
 
 // Init initializes the search model.
@@ -64,23 +65,22 @@ func (m *SearchModel) Init() tea.Cmd {
 func NewSearchModel() *SearchModel {
 	ti := textinput.New()
 	ti.Placeholder = "Enter search pattern (e.g., '*.go', 'TODO', 'func main')"
-	ti.Focus()         // Focus the text input when the model is created
-	ti.CharLimit = 156 // Set a character limit for the input
-	ti.Width = 50      // Set the display width of the input
+	ti.Focus()
+	ti.CharLimit = 156
+	ti.Width = 50
 
 	baseDir, err := os.Getwd()
 	if err != nil {
-		// Removed log.Printf: log.Printf("Error getting current working directory for search model: %v", err)
+		log.Printf("SearchModel: Error getting current working directory: %v", err)
 	}
 
 	return &SearchModel{
-		textInput: ti,
-		results:   []FileItem{}, // Initialize with an empty slice of FileItem
-		cursor:    0,
-		// Debounce ticker: sends a MsgDebouncedSearch after 300ms of inactivity
+		textInput:      ti,
+		results:        []FileItem{},
+		cursor:         0,
 		debounceTicker: time.NewTicker(300 * time.Millisecond),
 		lastUpdate:     time.Now(),
-		querying:       false, // Not querying initially
+		querying:       false,
 		baseDir:        baseDir,
 		preview:        "",
 		showPreview:    false,
@@ -102,26 +102,27 @@ func debounceCmd(interval time.Duration) tea.Cmd {
 // It takes a search pattern as input.
 func searchFilesCmd(pattern string, baseDir string) tea.Cmd {
 	return func() tea.Msg {
-		// Execute the ripgrep search.
+		log.Printf("searchFilesCmd: Initiating ripgrep for pattern '%s' in dir '%s'", pattern, baseDir)
 		matches, err := search.RunRipgrep(pattern, baseDir)
 		if err != nil {
-			// Removed log.Printf: log.Printf("Error running ripgrep: %v", err)
+			log.Printf("searchFilesCmd: Error running ripgrep: %v", err)
 			return SearchErrorMsg{Err: fmt.Errorf("ripgrep search failed: %w", err)}
 		}
+		log.Printf("searchFilesCmd: Ripgrep returned %d matches.", len(matches))
 
 		// Convert RipgrepMatch to FileItem for uniform handling in results.
 		var fileItems []FileItem
-		uniqueFiles := make(map[string]struct{}) // Use a map to track unique file paths
+		uniqueFiles := make(map[string]struct{})
 		for _, m := range matches {
 			if _, exists := uniqueFiles[m.File]; !exists {
 				fileItems = append(fileItems, FileItem{
-					Path: m.File,
-					// Content is loaded lazily when tagged or previewed
-					OriginalMatch: &m, // Keep a reference to the original match if needed
+					Path:          m.File,
+					OriginalMatch: &m,
 				})
 				uniqueFiles[m.File] = struct{}{}
 			}
 		}
+		log.Printf("searchFilesCmd: Converted to %d unique FileItems.", len(fileItems))
 
 		// Sort file items by path for consistent display.
 		sort.Slice(fileItems, func(i, j int) bool {
@@ -134,24 +135,28 @@ func searchFilesCmd(pattern string, baseDir string) tea.Cmd {
 
 // readFileContent is a helper function to read the entire content of a file from disk.
 func readFileContent(filePath string) (string, error) {
+	log.Printf("readFileContent: Attempting to read file: %s", filePath)
 	content, err := ioutil.ReadFile(filePath)
 	if err != nil {
-		return "", err // Return error if file cannot be read
+		log.Printf("readFileContent: Error reading file %s: %v", filePath, err)
+		return "", err
 	}
-	return string(content), nil // Return content as a string
+	log.Printf("readFileContent: Successfully read %d bytes from %s.", len(content), filePath)
+	return string(content), nil
 }
 
 // loadFileContentCmd creates a Bubble Tea command to load file content asynchronously.
 // This prevents blocking the UI while reading potentially large files.
 func (m *SearchModel) loadFileContentCmd(filePath string) tea.Cmd {
 	return func() tea.Msg {
-		fullPath := filepath.Join(m.baseDir, filePath) // Construct the full absolute path
-		content, err := readFileContent(fullPath)      // Read the file content
+		fullPath := filepath.Join(m.baseDir, filePath)
+		log.Printf("loadFileContentCmd: Triggered for path: %s (full: %s)", filePath, fullPath)
+		content, err := readFileContent(fullPath)
 		if err != nil {
-			// If an error occurs, return a fileContentErrorMsg.
+			log.Printf("loadFileContentCmd: Error in readFileContent for %s: %v", filePath, err)
 			return fileContentErrorMsg{Path: filePath, Err: err}
 		}
-		// If successful, return a fileContentMsg with the path and content.
+		log.Printf("loadFileContentCmd: Content loaded for %s.", filePath)
 		return fileContentMsg{Path: filePath, Content: content}
 	}
 }
@@ -161,178 +166,191 @@ func (m *SearchModel) GetTaggedFiles() []FileItem {
 	var tagged []FileItem
 	for _, file := range m.results {
 		if file.Tagged {
-			tagged = append(tagged, file) // Include the full FileItem, including content if loaded
+			tagged = append(tagged, file)
 		}
 	}
+	log.Printf("SearchModel: GetTaggedFiles called, found %d tagged files.", len(tagged))
 	return tagged
 }
 
 // Update handles messages for the SearchModel.
 func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd // List of commands to be returned
-	var cmd tea.Cmd    // For individual sub-model commands
+	var cmds []tea.Cmd
+	var cmd tea.Cmd
 
-	// Removed log.Printf: log.Printf("SearchModel Update received message: %T", msg)
+	log.Printf("SearchModel Update received message: %T", msg)
 
-	// Always update the text input model first.
-	// This ensures that character input is processed and displayed correctly.
 	oldTextInputValue := m.textInput.Value()
 	m.textInput, cmd = m.textInput.Update(msg)
 	cmds = append(cmds, cmd)
 
-	// If the text input value has changed (meaning a character was typed or deleted),
-	// reset the debounce timer.
 	if m.textInput.Focused() && oldTextInputValue != m.textInput.Value() {
 		m.lastUpdate = time.Now()
-		// Only start a new debounce command if not already querying
 		if !m.querying {
 			cmds = append(cmds, debounceCmd(300*time.Millisecond))
-			// Removed log.Printf: log.Printf("SearchModel: Text input changed, starting debounce.")
+			log.Printf("SearchModel: Text input changed, starting debounce.")
 		}
 	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Removed log.Printf: log.Printf("SearchModel: KeyMsg received: %s (Type: %d, Mod: %d)", msg.String(), msg.Type, msg.Mod)
-		switch msg.Type { // Changed from msg.String() to msg.Type
+		log.Printf("SearchModel: KeyMsg received: %s (Type: %d, Mod: %d)", msg.String(), msg.Type)
+		switch msg.Type {
 		case tea.KeyEnter:
-			// Removed log.Printf: log.Printf("SearchModel: Enter key pressed.")
-			// If preview is active, close it. Otherwise, trigger search for the input.
+			log.Printf("SearchModel: Enter key pressed.")
 			if m.showPreview {
 				m.showPreview = false
 				m.preview = ""
-				// Removed log.Printf: log.Printf("SearchModel: Preview closed.")
-			} else { // Trigger search on enter if not in preview
+				log.Printf("SearchModel: Preview closed.")
+			} else if m.cursor >= 0 && m.cursor < len(m.results) { // If not in preview, try to open preview
+				m.showPreview = true
+				m.preview = "Loading content..."
+				cmds = append(cmds, m.loadFileContentCmd(m.results[m.cursor].Path))
+				log.Printf("SearchModel: Loading content for preview: %s", m.results[m.cursor].Path)
+			} else { // No results to preview, trigger search
 				query := m.textInput.Value()
 				if query != "" {
 					m.err = nil
-					m.querying = true // Set querying flag
+					m.querying = true
 					cmds = append(cmds, searchFilesCmd(query, m.baseDir))
-					// Removed log.Printf: log.Printf("SearchModel: Triggering search for query: %s", query)
+					log.Printf("SearchModel: Triggering search for query: %s", query)
 				}
 			}
 		case tea.KeyEsc:
-			// Removed log.Printf: log.Printf("SearchModel: Esc key pressed.")
-			// Close preview if active.
+			log.Printf("SearchModel: Esc key pressed.")
 			if m.showPreview {
 				m.showPreview = false
 				m.preview = ""
-				// Removed log.Printf: log.Printf("SearchModel: Preview closed via Esc.")
+				log.Printf("SearchModel: Preview closed via Esc.")
 			}
-		case tea.KeyCtrlN: // Ctrl+N for navigating down
-			// Removed log.Printf: log.Printf("SearchModel: Ctrl+N pressed (down).")
-			// Move cursor down.
+		case tea.KeyCtrlN:
+			log.Printf("SearchModel: Ctrl+N pressed (down).")
 			if len(m.results) > 0 {
 				m.cursor = (m.cursor + 1) % len(m.results)
-				// Removed log.Printf: log.Printf("SearchModel: Cursor moved to %d.", m.cursor)
-				// If preview is active, update its content.
+				log.Printf("SearchModel: Cursor moved to %d.", m.cursor)
 				if m.showPreview {
 					m.preview = "Loading content..."
 					cmds = append(cmds, m.loadFileContentCmd(m.results[m.cursor].Path))
-					// Removed log.Printf: log.Printf("SearchModel: Loading content for preview: %s", m.results[m.cursor].Path)
+					log.Printf("SearchModel: Loading content for preview: %s", m.results[m.cursor].Path)
 				}
 			}
-		case tea.KeyCtrlP: // Ctrl+P for navigating up
-			// Removed log.Printf: log.Printf("SearchModel: Ctrl+P pressed (up).")
-			// Move cursor up.
+		case tea.KeyCtrlP:
+			log.Printf("SearchModel: Ctrl+P pressed (up).")
 			if len(m.results) > 0 {
 				m.cursor = (m.cursor - 1 + len(m.results)) % len(m.results)
-				// Removed log.Printf: log.Printf("SearchModel: Cursor moved to %d.", m.cursor)
-				// If preview is active, update its content.
+				log.Printf("SearchModel: Cursor moved to %d.", m.cursor)
 				if m.showPreview {
 					m.preview = "Loading content..."
 					cmds = append(cmds, m.loadFileContentCmd(m.results[m.cursor].Path))
-					// Removed log.Printf: log.Printf("SearchModel: Loading content for preview: %s", m.results[m.cursor].Path)
+					log.Printf("SearchModel: Loading content for preview: %s", m.results[m.cursor].Path)
 				}
 			}
-		case tea.KeyCtrlA: // Changed: Now checking for tea.KeyCtrlA for tagging
-			// Removed log.Printf: log.Printf("SearchModel: Ctrl+A pressed (tag/untag).")
-			// Toggle tag on current file.
+		case tea.KeyCtrlA: // Ctrl+A for tagging
+			log.Printf("SearchModel: Ctrl+A pressed (tag/untag).")
 			if m.cursor >= 0 && m.cursor < len(m.results) {
-				m.results[m.cursor].Tagged = !m.results[m.cursor].Tagged
-				// Removed log.Printf: log.Printf("SearchModel: Toggled tag for %s. New status: %v", m.results[m.cursor].Path, m.results[m.cursor].Tagged)
+				// Get a reference to the current file item to modify it in place
+				fileToModify := &m.results[m.cursor]
 
-				// If the file is now tagged AND its content hasn't been loaded yet, load it.
-				if m.results[m.cursor].Tagged && m.results[m.cursor].Content == "" {
-					cmds = append(cmds, m.loadFileContentCmd(m.results[m.cursor].Path))
-					// Removed log.Printf: log.Printf("SearchModel: Loading content for tagged file: %s", m.results[m.cursor].Path)
+				// Toggle the tagged status
+				fileToModify.Tagged = !fileToModify.Tagged
+				log.Printf("SearchModel: Toggled tag for %s. New status: %v", fileToModify.Path, fileToModify.Tagged)
+
+				if fileToModify.Tagged { // If the file is now tagged
+					if fileToModify.Content == "" { // If content hasn't been loaded yet for this file
+						log.Printf("SearchModel: Content not loaded for %s. Initiating load. TaggedFilesMsg will be sent after content arrives.", fileToModify.Path)
+						// Initiate content load. TaggedFilesMsg will be sent AFTER content is loaded via fileContentMsg.
+						cmds = append(cmds, m.loadFileContentCmd(fileToModify.Path))
+					} else {
+						// Content is already present (e.g., from a previous preview), send TaggedFilesMsg immediately.
+						log.Printf("SearchModel: Content already present for %s. Sending TaggedFilesMsg immediately.", fileToModify.Path)
+						cmds = append(cmds, func() tea.Msg {
+							return TaggedFilesMsg(m.GetTaggedFiles())
+						})
+					}
+				} else { // If the file is now untagged
+					// Untagging does not depend on content loading. Send TaggedFilesMsg immediately.
+					log.Printf("SearchModel: Untagged file %s. Sending TaggedFilesMsg immediately.", fileToModify.Path)
+					cmds = append(cmds, func() tea.Msg {
+						return TaggedFilesMsg(m.GetTaggedFiles())
+					})
 				}
-
-				// Inform the App model that tagged files have changed.
-				cmds = append(cmds, func() tea.Msg {
-					return TaggedFilesMsg(m.GetTaggedFiles())
-				})
-				// Removed log.Printf: log.Printf("SearchModel: Sent TaggedFilesMsg.")
 			}
-		} // end of inner switch tea.KeyMsg
+		}
 	case MsgDebouncedSearch:
-		// Removed log.Printf: log.Printf("SearchModel: MsgDebouncedSearch received.")
-		// If debounce finished and enough time has passed since last update, perform search.
+		log.Printf("SearchModel: MsgDebouncedSearch received.")
 		if time.Since(m.lastUpdate) >= 300*time.Millisecond {
 			query := m.textInput.Value()
 			if query != "" {
 				m.err = nil
-				m.querying = true // Set querying flag
+				m.querying = true
 				cmds = append(cmds, searchFilesCmd(query, m.baseDir))
-				// Removed log.Printf: log.Printf("SearchModel: Debounced search triggered for query: %s", query)
+				log.Printf("SearchModel: Debounced search triggered for query: '%s'.", query)
 			} else {
-				m.results = []FileItem{} // Clear results if query is empty
+				m.results = []FileItem{}
 				m.err = nil
 				m.querying = false
-				// Removed log.Printf: log.Printf("SearchModel: Debounced search, query empty, results cleared.")
+				log.Printf("SearchModel: Debounced search, query empty, results cleared.")
 			}
 		} else {
-			// Removed log.Printf: log.Printf("SearchModel: Debounced search received, but not enough time passed. Skipping.")
+			log.Printf("SearchModel: Debounced search received, but not enough time passed (%.0fms since last update). Skipping.", time.Since(m.lastUpdate).Milliseconds())
 		}
 	case SearchResultsMsg:
-		// Removed log.Printf: log.Printf("SearchModel: SearchResultsMsg received. %d results found.", len(msg))
-		// Search results received.
-		m.results = msg    // Update results with FileItems
-		m.querying = false // Clear querying flag
-		m.cursor = 0       // Reset cursor to top
+		log.Printf("SearchModel: SearchResultsMsg received. %d results found.", len(msg))
+		m.results = msg
+		m.querying = false
+		m.cursor = 0
 		if len(m.results) == 0 && m.textInput.Value() != "" {
 			m.err = fmt.Errorf("no matches found for '%s'", m.textInput.Value())
-			// Removed log.Printf: log.Printf("SearchModel: No matches found for query: %s", m.textInput.Value())
+			log.Printf("SearchModel: No matches found for query: '%s'.", m.textInput.Value())
 		} else {
 			m.err = nil
 		}
-		// Inform App model about potentially changed tagged files.
+		// Always inform App model about potentially changed tagged files after search.
+		// Existing tags might be on files not returned by new search, or new files can be found.
 		cmds = append(cmds, func() tea.Msg {
 			return TaggedFilesMsg(m.GetTaggedFiles())
 		})
-		// Removed log.Printf: log.Printf("SearchModel: Sent TaggedFilesMsg after search results update.")
+		log.Printf("SearchModel: Sent TaggedFilesMsg after search results update.")
 	case SearchErrorMsg:
-		// Removed log.Printf: log.Printf("SearchModel: SearchErrorMsg received: %v", msg.Err)
-		// Search error received.
-		m.results = []FileItem{} // Clear results on error
-		m.err = msg.Err          // Store the error
-		m.querying = false       // Clear querying flag
+		log.Printf("SearchModel: SearchErrorMsg received: %v", msg.Err)
+		m.results = []FileItem{}
+		m.err = msg.Err
+		m.querying = false
 	case fileContentMsg:
-		// Removed log.Printf: log.Printf("SearchModel: fileContentMsg received for %s.", msg.Path)
-		// File content loaded. Update the corresponding FileItem and preview if active.
+		log.Printf("SearchModel: fileContentMsg received for %s. Content length: %d", msg.Path, len(msg.Content))
+		// File content loaded. Update the corresponding FileItem.
+		found := false
 		for i := range m.results {
 			if m.results[i].Path == msg.Path {
 				m.results[i].Content = msg.Content
-				// Removed log.Printf: log.Printf("SearchModel: Content loaded for %s.", msg.Path)
+				log.Printf("SearchModel: Content field updated for %s. New length: %d", msg.Path, len(m.results[i].Content))
+				found = true
 				break
 			}
 		}
+		if !found {
+			log.Printf("SearchModel: WARNING - fileContentMsg for %s received, but file not found in current results slice.", msg.Path)
+		}
+
+		// If preview is active and the loaded content is for the currently selected file, update preview.
 		if m.showPreview && m.cursor >= 0 && m.cursor < len(m.results) && m.results[m.cursor].Path == msg.Path {
 			m.preview = msg.Content
-			// Removed log.Printf: log.Printf("SearchModel: Preview updated for %s.", msg.Path)
+			log.Printf("SearchModel: Preview updated for %s.", msg.Path)
 		}
-		// Also inform App model about updated tagged files.
+
+		// VERY IMPORTANT: Now that content is loaded, inform the App model with the updated FileItem.
+		// This handles the case where the file was newly tagged and its content just arrived.
 		cmds = append(cmds, func() tea.Msg {
 			return TaggedFilesMsg(m.GetTaggedFiles())
 		})
-		// Removed log.Printf: log.Printf("SearchModel: Sent TaggedFilesMsg after file content update.")
+		log.Printf("SearchModel: Sent TaggedFilesMsg after fileContentMsg (ensuring content is passed).")
+
 	case fileContentErrorMsg:
-		// Removed log.Printf: log.Printf("SearchModel: fileContentErrorMsg received for %s: %v", msg.Path, msg.Err)
-		// Error loading file content. Display in preview if active.
+		log.Printf("SearchModel: fileContentErrorMsg received for %s: %v", msg.Path, msg.Err)
 		if m.showPreview && m.cursor >= 0 && m.cursor < len(m.results) && m.results[m.cursor].Path == msg.Path {
 			m.preview = fmt.Sprintf("Error loading content for %s:\n%s", msg.Path, msg.Err.Error())
 		}
-		// Removed log.Printf: log.Printf("SearchModel: Error in preview for %s.", msg.Path)
+		log.Printf("SearchModel: Error displayed in preview for %s.", msg.Path)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -347,7 +365,6 @@ func (m *SearchModel) View() string {
 		"",
 		m.textInput.View(),
 		"",
-		// Updated help text for new keybindings
 		styles.HelpStyle.Render("Type to search • Ctrl+N/Ctrl+P: Navigate • Ctrl+A: Tag/Untag • Enter: Preview"),
 	)
 
@@ -359,7 +376,6 @@ func (m *SearchModel) View() string {
 			Padding(0, 1).
 			Render(fmt.Sprintf("Error: %s", m.err.Error()))
 	} else if m.querying {
-		// Show a loading indicator when a search is in progress
 		errorSection = lipgloss.NewStyle().
 			Foreground(styles.MutedColor).
 			Padding(0, 1).
@@ -408,14 +424,12 @@ func (m *SearchModel) View() string {
 			resultsContent,
 		)
 	} else if m.textInput.Value() != "" && m.err == nil && !m.querying {
-		// Only show this if there's a query but no results and no error, and not currently querying
 		resultsSection = lipgloss.NewStyle().
 			Foreground(styles.MutedColor).
 			Padding(0, 1).
 			Render("No files match your search pattern.")
 	}
 
-	// Combine left panel (search input, errors, results)
 	leftPanel := lipgloss.JoinVertical(
 		lipgloss.Left,
 		searchSection,
@@ -423,7 +437,6 @@ func (m *SearchModel) View() string {
 		resultsSection,
 	)
 
-	// If preview is shown, create two-column layout
 	if m.showPreview && m.preview != "" {
 		previewTitle := lipgloss.NewStyle().Bold(true).Render(
 			fmt.Sprintf("👁 Preview: %s", m.results[m.cursor].Path),

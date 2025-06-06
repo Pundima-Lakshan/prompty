@@ -2,10 +2,11 @@ package models
 
 import (
 	"fmt"
+	"log" // Re-enabled logging
 	"prompty/internal/ui/styles"
 	"strings"
 
-	"github.com/atotto/clipboard" // Added: Import the clipboard library
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -43,11 +44,13 @@ func NewComposeModel() *ComposeModel {
 // SetSelectedFiles updates the ComposeModel's list of files that will be included
 // in the generated prompt. This method is called by the App model.
 func (m *ComposeModel) SetSelectedFiles(files []FileItem) tea.Cmd {
+	log.Printf("ComposeModel: SetSelectedFiles received %d files.", len(files))
 	m.selectedFiles = files // Update the list of selected files
 	// If the output screen is currently visible, regenerate the prompt to reflect
 	// any changes in the selected files' content or list.
 	if m.showOutput {
 		m.generatePrompt()
+		log.Printf("ComposeModel: Regenerating prompt because output was shown.")
 	}
 	return nil // No command returned
 }
@@ -55,29 +58,37 @@ func (m *ComposeModel) SetSelectedFiles(files []FileItem) tea.Cmd {
 // Update handles compose model updates
 func (m *ComposeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+	log.Printf("ComposeModel Update received message: %T", msg) // Log all incoming messages
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		log.Printf("ComposeModel: KeyMsg received: %s (Type: %d)", msg.String(), msg.Type)
 		switch msg.String() {
 		case "ctrl+g":
+			log.Printf("ComposeModel: Ctrl+G pressed (generate).")
 			// Generate final prompt
 			m.generatePrompt()
 			m.showOutput = true
+			log.Printf("ComposeModel: Prompt generated, showing output.")
 			return m, nil
 		case "esc":
+			log.Printf("ComposeModel: Esc key pressed.")
 			if m.showOutput {
 				m.showOutput = false
+				log.Printf("ComposeModel: Hiding output, returning to editing.")
 				return m, nil
 			}
 		case "y": // Copy to clipboard
+			log.Printf("ComposeModel: Y key pressed (copy).")
 			if m.showOutput {
-				// Implement copy to clipboard functionality using github.com/atotto/clipboard
 				err := clipboard.WriteAll(m.finalPrompt)
 				if err != nil {
+					log.Printf("ComposeModel: Error copying to clipboard: %v", err)
 					// In a real application, you might want to show an error message to the user
 					// For now, we'll just acknowledge the attempt.
 					// You could add a temporary status message to the model for this.
-					_ = err // Suppress "err declared and not used" warning if not handled visibly
+				} else {
+					log.Printf("ComposeModel: Prompt copied to clipboard successfully.")
 				}
 				return m, nil
 			}
@@ -91,6 +102,7 @@ func (m *ComposeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // generatePrompt creates the final prompt with selected files
 func (m *ComposeModel) generatePrompt() {
 	userPrompt := strings.TrimSpace(m.textarea.Value())
+	log.Printf("ComposeModel: generatePrompt called. User prompt length: %d", len(userPrompt))
 
 	var builder strings.Builder
 
@@ -104,16 +116,21 @@ func (m *ComposeModel) generatePrompt() {
 	// Add selected files
 	if len(m.selectedFiles) > 0 {
 		builder.WriteString("## Relevant Files\n\n")
+		log.Printf("ComposeModel: Adding %d selected files to prompt.", len(m.selectedFiles))
 
 		for _, file := range m.selectedFiles {
 			builder.WriteString(fmt.Sprintf("### %s\n\n", file.Path))
 			builder.WriteString("```\n")
 			builder.WriteString(file.Content) // Use actual file content
 			builder.WriteString("```\n\n")
+			log.Printf("ComposeModel: Added file '%s' content (length: %d) to prompt.", file.Path, len(file.Content))
 		}
+	} else {
+		log.Printf("ComposeModel: No selected files to add.")
 	}
 
 	m.finalPrompt = builder.String()
+	log.Printf("ComposeModel: Final prompt generated. Total length: %d", len(m.finalPrompt))
 }
 
 // View renders the compose interface
@@ -152,7 +169,7 @@ func (m *ComposeModel) View() string {
 		m.textarea.View(),
 	)
 
-	// Help section - Removed "Ctrl+S: Save"
+	// Help section
 	help := styles.HelpStyle.Render(
 		"Ctrl+G: Generate • Esc: Back",
 	)

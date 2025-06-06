@@ -2,6 +2,7 @@ package models
 
 import (
 	"fmt"
+	"log"                     // Re-enabled logging
 	"prompty/internal/search" // Added: Import for search.RipgrepMatch
 	"prompty/internal/ui/styles"
 
@@ -51,6 +52,7 @@ func NewBrowseModel() *BrowseModel {
 // SetTaggedFiles updates the BrowseModel's file list with the currently tagged files.
 // This function is called by the App model when tagged files change in SearchModel.
 func (m *BrowseModel) SetTaggedFiles(files []FileItem) tea.Cmd {
+	log.Printf("BrowseModel: SetTaggedFiles received %d files.", len(files))
 	m.files = files // Replace the current list with the new tagged files
 	// Reset cursor if the list is now empty or cursor is out of bounds
 	if len(m.files) == 0 {
@@ -69,56 +71,71 @@ func (m *BrowseModel) SetTaggedFiles(files []FileItem) tea.Cmd {
 // Update handles messages for the BrowseModel.
 // It processes keyboard input for navigation, untagging, and previewing files.
 func (m *BrowseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd // Placeholder for commands to be returned
+	var cmd tea.Cmd                                            // Placeholder for commands to be returned
+	log.Printf("BrowseModel Update received message: %T", msg) // Log all incoming messages
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		log.Printf("BrowseModel: KeyMsg received: %s (Type: %d, Mod: %d)", msg.String(), msg.Type)
 		switch msg.Type { // Changed from msg.String() to msg.Type
 		case tea.KeyCtrlN: // Only Ctrl+N for navigating down
+			log.Printf("BrowseModel: Ctrl+N pressed (down).")
 			if len(m.files) > 0 {
 				m.cursor = (m.cursor + 1) % len(m.files)
+				log.Printf("BrowseModel: Cursor moved to %d.", m.cursor)
 				// If preview is active, update it to the content of the newly selected file.
 				if m.showPreview {
 					m.preview = m.files[m.cursor].Content // Content should already be loaded
+					log.Printf("BrowseModel: Preview updated for %s.", m.files[m.cursor].Path)
 				}
 			}
 		case tea.KeyCtrlP: // Only Ctrl+P for navigating up
+			log.Printf("BrowseModel: Ctrl+P pressed (up).")
 			if len(m.files) > 0 {
 				m.cursor = (m.cursor - 1 + len(m.files)) % len(m.files)
+				log.Printf("BrowseModel: Cursor moved to %d.", m.cursor)
 				// If preview is active, update it to the content of the newly selected file.
 				if m.showPreview {
 					m.preview = m.files[m.cursor].Content // Content should already be loaded
+					log.Printf("BrowseModel: Preview updated for %s.", m.files[m.cursor].Path)
 				}
 			}
 		case tea.KeyEnter:
+			log.Printf("BrowseModel: Enter key pressed.")
 			// Toggle preview.
 			if m.cursor >= 0 && m.cursor < len(m.files) {
 				if m.showPreview {
 					m.showPreview = false
 					m.preview = ""
+					log.Printf("BrowseModel: Preview closed.")
 				} else {
 					m.showPreview = true
 					// Display content, which should already be loaded.
 					m.preview = m.files[m.cursor].Content
+					log.Printf("BrowseModel: Preview opened for %s.", m.files[m.cursor].Path)
 				}
 			}
 		case tea.KeyEsc:
+			log.Printf("BrowseModel: Esc key pressed.")
 			// Close preview.
 			m.showPreview = false
 			m.preview = ""
-		case tea.KeyCtrlJ: // Changed: Now checking for tea.KeyCtrlJ
+			log.Printf("BrowseModel: Preview closed via Esc.")
+		case tea.KeyCtrlA: // Ctrl+A for untagging
+			log.Printf("BrowseModel: Ctrl+A pressed (untag).")
 			// Toggle tag on current file (effectively untagging in this view).
 			if m.cursor >= 0 && m.cursor < len(m.files) {
-				if m.files[m.cursor].Tagged {
-					m.files[m.cursor].Tagged = false // Mark as untagged
+				if m.files[m.cursor].Tagged { // Only untag if it's currently tagged
+					m.files[m.cursor].Tagged = false // Mark as untagged (conceptually, for this model)
+					log.Printf("BrowseModel: Untagged file: %s", m.files[m.cursor].Path)
 
 					// Send a message to the App model so it can update the source of truth (SearchModel)
 					// and then update the ComposeModel.
 					cmds := []tea.Cmd{func() tea.Msg {
-						// This message needs to be handled by App to correctly update the source of truth.
-						// We'll indicate which file to untag.
 						return UntagFileMsg{Path: m.files[m.cursor].Path}
 					}}
+					log.Printf("BrowseModel: Sent UntagFileMsg for %s.", m.files[m.cursor].Path)
+
 					// Remove the untagged file from this list immediately for visual feedback
 					m.files = append(m.files[:m.cursor], m.files[m.cursor+1:]...)
 					if m.cursor >= len(m.files) && len(m.files) > 0 {
@@ -126,6 +143,7 @@ func (m *BrowseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else if len(m.files) == 0 {
 						m.cursor = 0
 					}
+					log.Printf("BrowseModel: File removed from list. New cursor: %d, list size: %d", m.cursor, len(m.files))
 					// If preview was active, clear it.
 					m.showPreview = false
 					m.preview = ""
@@ -145,7 +163,6 @@ func (m *BrowseModel) View() string {
 	taggedCount := len(m.files) // In this model, all files are by definition "selected/tagged"
 
 	if taggedCount == 0 {
-		// Fix for styles.MutedColor.Render undefined: Create a new style.
 		fileList = append(fileList, lipgloss.NewStyle().Foreground(styles.MutedColor).Render("No files have been tagged yet. Go to 'Search' tab to find and tag files."))
 	} else {
 		for i, file := range m.files {
@@ -174,7 +191,7 @@ func (m *BrowseModel) View() string {
 
 	// Updated help text for new keybindings
 	help := styles.HelpStyle.Render(
-		"Ctrl+N/Ctrl+P: Navigate • Ctrl+J: Untag • Enter: Preview • Esc: Close preview",
+		"Ctrl+N/Ctrl+P: Navigate • Ctrl+A: Untag • Enter: Preview • Esc: Close preview",
 	)
 
 	leftPanel := lipgloss.JoinVertical(
