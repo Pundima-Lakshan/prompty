@@ -76,7 +76,7 @@ func NewSearchModel() *SearchModel {
 	ti.Placeholder = "Type to fuzzy search for files..."
 	ti.Focus()
 	// Initial width, will be adjusted by WindowSizeMsg to full available width.
-	ti.Width = 50
+	ti.Width = 200
 
 	// Initialize viewport with arbitrary dimensions, will be updated by WindowSizeMsg
 	// Set width based on text input width, initial height arbitrary
@@ -549,16 +549,13 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case fileContentMsg:
 		log.Printf("SearchModel: fileContentMsg received for %s. Content length: %d", msg.Path, len(msg.Content))
 		// Update content for the file in both m.results (if present) and m.allTaggedFiles
-		foundInResults := false
+		// No need for 'foundInResults' here as its only purpose was to check if the file was in results,
+		// but the update logic now correctly updates m.results in-place if found.
 		for i := range m.results {
 			if m.results[i].Path == msg.Path {
 				m.results[i].Content = msg.Content
-				foundInResults = true
 				break
 			}
-		}
-		if !foundInResults {
-			log.Printf("SearchModel: WARNING - fileContentMsg for %s received, but file not found in current displayed results slice.", msg.Path)
 		}
 
 		// Update the content in the persistent store (m.allTaggedFiles)
@@ -597,7 +594,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 	}
 
-	// Any KeyMsg not handled above (Ctrl+A, Ctrl+Q) should be passed to the resultsViewport for scrolling
+	// Any KeyMsg not handled above (Ctrl+A, Ctrl+Q) should be passed to the resultsViewport for scrolling.
 	// This ensures j/k/ctrl+u/ctrl+d/pageup/pagedown keys work for results scrolling.
 	// Note: textinput.Update(msg) has already been called above.
 	if _, isKeyMsg := msg.(tea.KeyMsg); isKeyMsg {

@@ -2,6 +2,7 @@ package models
 
 import (
 	"fmt"
+	"log" // Added log for debugging
 	"prompty/internal/ui/styles"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -81,11 +82,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		// Handle global key presses (like Ctrl+C for quit, or tab navigation).
+		// IMPORTANT: Ensure Ctrl+A does NOT lead to a quit here.
 		switch msg.String() {
 		case "ctrl+c":
-			// Quit the application.
 			return m, tea.Quit
-
+		case "ctrl+q": // Assuming main.go correctly maps this.
+			return m, tea.Quit
 		case "1":
 			// Switch to Search state (tab 1).
 			m.state = SearchState
@@ -131,6 +133,11 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				internalCmd = m.browseModel.SetTaggedFiles(m.currentTaggedFiles)
 			}
 			return m, internalCmd
+		case "ctrl+a": // Explicitly handle Ctrl+A at the App level
+			// This case is added to ensure Ctrl+A does not accidentally trigger a global quit.
+			// The key message will then be passed down to the active sub-model's Update method.
+			log.Printf("AppModel: Caught Ctrl+A globally. Delegating to sub-model.")
+			// DO NOT return here. Let the message flow to the delegation logic below.
 		}
 
 	case TaggedFilesMsg: // Message received from SearchModel when tagged files change.
