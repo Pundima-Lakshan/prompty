@@ -60,6 +60,7 @@ type SearchModel struct {
 	err             error           // Stores any error that occurred during the search
 	baseDir         string          // The base directory for file paths
 	resultsViewport viewport.Model  // Added: Viewport for scrollable search results
+	allTaggedFiles  []FileItem      // New: Stores all persistently tagged files
 }
 
 // Init initializes the search model.
@@ -97,7 +98,8 @@ func NewSearchModel() *SearchModel {
 		querying:        false,
 		err:             nil,
 		baseDir:         baseDir,
-		resultsViewport: vp, // Initialize the results viewport
+		resultsViewport: vp,           // Initialize the results viewport
+		allTaggedFiles:  []FileItem{}, // Initialize the new persistent store
 	}
 }
 
@@ -233,15 +235,13 @@ func (m *SearchModel) loadFileContentCmd(filePath string) tea.Cmd {
 }
 
 // GetTaggedFiles returns a slice of FileItem objects that are currently tagged by the user.
+// This now returns from the persistent list of all tagged files.
 func (m *SearchModel) GetTaggedFiles() []FileItem {
-	var tagged []FileItem
-	for _, file := range m.results {
-		if file.Tagged {
-			tagged = append(tagged, file)
-		}
-	}
-	log.Printf("SearchModel: GetTaggedFiles called, found %d tagged files.", len(tagged))
-	return tagged
+	// Return a copy to prevent external modifications
+	copiedFiles := make([]FileItem, len(m.allTaggedFiles))
+	copy(copiedFiles, m.allTaggedFiles)
+	log.Printf("SearchModel: GetTaggedFiles called, returning %d tagged files from persistent store.", len(copiedFiles))
+	return copiedFiles
 }
 
 // Update handles messages for the SearchModel.
@@ -251,7 +251,60 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	log.Printf("SearchModel Update received message: %T", msg)
 
-	// Always update text input first.
+	// Handle specific key messages that should bypass textInput/viewport processing
+	if kMsg, isKeyMsg := msg.(tea.KeyMsg); isKeyMsg {
+		switch kMsg.Type {
+		case tea.KeyCtrlA: // Handle Ctrl+A for tagging first, to prevent cursor reset
+			log.Printf("SearchModel: Ctrl+A pressed (tag/untag).")
+			if m.cursor >= 0 && m.cursor < len(m.results) {
+				fileToModify := &m.results[m.cursor]
+				fileToModify.Tagged = !fileToModify.Tagged // Toggle status in current results
+				log.Printf("SearchModel: Toggled tag for %s. New status in m.results: %v", fileToModify.Path, fileToModify.Tagged)
+
+				// Update m.allTaggedFiles (the persistent store) based on the toggle
+				if fileToModify.Tagged {
+					// Add to allTaggedFiles if it's not already there
+					foundInAllTagged := false
+					for _, taggedFile := range m.allTaggedFiles {
+						if taggedFile.Path == fileToModify.Path {
+							foundInAllTagged = true
+							break
+						}
+					}
+					if !foundInAllTagged {
+						// Need a deep copy of FileItem if it contains pointers/slices, but for string/bool, direct copy is fine.
+						// Ensure content is copied if available to the persistent store.
+						if fileToModify.Content == "" { // If content is not loaded yet, schedule it
+							cmds = append(cmds, m.loadFileContentCmd(fileToModify.Path))
+						}
+						m.allTaggedFiles = append(m.allTaggedFiles, *fileToModify)
+						log.Printf("SearchModel: Added %s to allTaggedFiles (persistent store).", fileToModify.Path)
+					}
+				} else {
+					// Remove from allTaggedFiles
+					newAllTaggedFiles := []FileItem{}
+					for _, taggedFile := range m.allTaggedFiles {
+						if taggedFile.Path != fileToModify.Path {
+							newAllTaggedFiles = append(newAllTaggedFiles, taggedFile)
+						}
+					}
+					m.allTaggedFiles = newAllTaggedFiles
+					log.Printf("SearchModel: Removed %s from allTaggedFiles (persistent store).", fileToModify.Path)
+				}
+
+				// Always send message to App to update global tagged files
+				cmds = append(cmds, func() tea.Msg {
+					return TaggedFilesMsg(m.GetTaggedFiles()) // GetTaggedFiles now uses m.allTaggedFiles
+				})
+			}
+			return m, tea.Batch(cmds...) // Return early after handling Ctrl+A
+		case tea.KeyCtrlQ:
+			log.Printf("SearchModel: Key 'Ctrl+Q' pressed. Quitting application.")
+			return m, tea.Quit // Quit the application
+		}
+	}
+
+	// Now, delegate to text input and viewport for other messages
 	oldTextInputValue := m.textInput.Value()
 	m.textInput, cmd = m.textInput.Update(msg)
 	cmds = append(cmds, cmd)
@@ -267,6 +320,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Handle other messages
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		log.Printf("SearchModel: WindowSizeMsg received. Width: %d, Height: %d", msg.Width, msg.Height)
@@ -309,12 +363,11 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 		return m, tea.Batch(cmds...)
 
-	case tea.KeyMsg:
-		log.Printf("SearchModel: KeyMsg received: %s (Type: %d)", msg.String(), msg.Type)
+	case tea.KeyMsg: // Only general key handling, Ctrl+A/Ctrl+Q already handled above
 		switch msg.Type {
 		case tea.KeyEnter:
 			log.Printf("SearchModel: Enter key pressed.")
-			// If there's a query, trigger fuzzy search. Otherwise, clear input.
+			// If there's a query, trigger fuzzy search. Otherwise, if query is empty, just show all tagged files.
 			if m.textInput.Value() != "" {
 				query := m.textInput.Value()
 				m.err = nil
@@ -324,27 +377,26 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, runFuzzySearchCmd(query, m.baseDir))
 				log.Printf("SearchModel: Triggering fuzzy search on Enter for query: '%s'.", query)
 			} else {
-				m.textInput.SetValue("")
-				m.results = []FileItem{} // Clear results if query is empty
+				// If query is empty, pressing Enter will display all tagged files.
+				m.results = m.GetTaggedFiles()
 				m.err = nil
 				m.querying = false
 				m.cursor = 0
 				cmds = append(cmds, func() tea.Msg { return TaggedFilesMsg(m.GetTaggedFiles()) })
-				log.Printf("SearchModel: Input cleared via Enter (no query).")
+				log.Printf("SearchModel: Input empty, showing all tagged files on Enter.")
 			}
 		case tea.KeyEsc:
 			log.Printf("SearchModel: Esc key pressed.")
-			// Clear the search query and results
+			// Clear the search query and show all currently tagged files (persistent store)
 			m.textInput.SetValue("")
-			m.results = []FileItem{} // Clear all results on Esc
+			m.results = m.GetTaggedFiles() // Display only currently tagged files after clearing search
 			m.err = nil
 			m.querying = false
 			m.cursor = 0
+			// Reset viewport offset to top when clearing search
+			m.resultsViewport.GotoTop()
 			cmds = append(cmds, func() tea.Msg { return TaggedFilesMsg(m.GetTaggedFiles()) })
-			log.Printf("SearchModel: Search cleared via Esc.")
-		case tea.KeyCtrlQ: // Handle Ctrl+Q to quit the application
-			log.Printf("SearchModel: Key 'Ctrl+Q' pressed. Quitting application.")
-			return m, tea.Quit // Quit the application
+			log.Printf("SearchModel: Search query cleared via Esc. Displaying all tagged files.")
 		case tea.KeyCtrlN: // Ctrl+N for navigating down (custom handling)
 			log.Printf("SearchModel: Ctrl+N pressed (down).")
 			if len(m.results) > 0 {
@@ -358,30 +410,6 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = (m.cursor - 1 + len(m.results)) % len(m.results)
 				m.resultsViewport.SetYOffset(m.cursor) // Corrected: Use SetYOffset for viewport scrolling
 				log.Printf("SearchModel: Cursor moved to %d. Viewport scrolled.", m.cursor)
-			}
-		case tea.KeyCtrlA: // Ctrl+A for tagging (custom handling)
-			log.Printf("SearchModel: Ctrl+A pressed (tag/untag).")
-			if m.cursor >= 0 && m.cursor < len(m.results) {
-				fileToModify := &m.results[m.cursor]
-				fileToModify.Tagged = !fileToModify.Tagged
-				log.Printf("SearchModel: Toggled tag for %s. New status: %v", fileToModify.Path, fileToModify.Tagged)
-
-				if fileToModify.Tagged {
-					if fileToModify.Content == "" {
-						log.Printf("SearchModel: Content not loaded for %s. Initiating load. TaggedFilesMsg will be sent after content arrives.", fileToModify.Path)
-						cmds = append(cmds, m.loadFileContentCmd(fileToModify.Path))
-					} else {
-						log.Printf("SearchModel: Content already present for %s. Sending TaggedFilesMsg immediately.", fileToModify.Path)
-						cmds = append(cmds, func() tea.Msg {
-							return TaggedFilesMsg(m.GetTaggedFiles())
-						})
-					}
-				} else {
-					log.Printf("SearchModel: Untagged file %s. Sending TaggedFilesMsg immediately.", fileToModify.Path)
-					cmds = append(cmds, func() tea.Msg {
-						return TaggedFilesMsg(m.GetTaggedFiles())
-					})
-				}
 			}
 		}
 
@@ -407,46 +435,37 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Printf("SearchModel: FuzzySearchResultsMsg received. %d paths matched.", len(msg))
 		m.querying = false // Fuzzy search is complete
 
-		// Step 1: Create a map to hold existing tagged files (to preserve their status)
-		retainedFilesMap := make(map[string]FileItem)
-		for _, item := range m.results {
-			if item.Tagged {
-				retainedFilesMap[item.Path] = item
-			}
+		// Step 1: Initialize displayed results with all currently tagged files.
+		// Use a map to efficiently track paths in newCombinedResults and avoid duplicates.
+		newCombinedResults := make([]FileItem, 0, len(m.allTaggedFiles)+len(msg))
+		seenPathsInCombined := make(map[string]bool)
+
+		for _, item := range m.allTaggedFiles {
+			newCombinedResults = append(newCombinedResults, item)
+			seenPathsInCombined[item.Path] = true
 		}
-		log.Printf("SearchModel: Retained %d previously tagged files.", len(retainedFilesMap))
+		log.Printf("SearchModel: Initial combined results with %d allTaggedFiles.", len(newCombinedResults))
 
-		var newCombinedResults []FileItem
+		// Step 2: Add new fuzzy search results if not already present (i.e., not a tagged file)
 		contentLoadCmds := make([]tea.Cmd, 0)
-
-		// Step 2: Process new fuzzy search results
 		for _, p := range msg {
-			if existingItem, found := retainedFilesMap[p]; found {
-				// File was previously tagged AND is in new search results, retain its status and content
-				newCombinedResults = append(newCombinedResults, existingItem)
-				delete(retainedFilesMap, p) // Remove from map as it's been processed
-				log.Printf("SearchModel: Retained existing tagged file: %s", p)
-			} else {
-				// File is new to this search result (or was untagged previously)
-				fileItem := FileItem{Path: p, Tagged: false} // Initially not tagged
+			if !seenPathsInCombined[p] {
+				fileItem := FileItem{Path: p, Tagged: false} // Newly found, untagged
 				newCombinedResults = append(newCombinedResults, fileItem)
 				contentLoadCmds = append(contentLoadCmds, m.loadFileContentCmd(p)) // Schedule content load
-				log.Printf("SearchModel: Added new untagged file: %s, scheduling content load.", p)
+				seenPathsInCombined[p] = true                                      // Mark as seen
+				log.Printf("SearchModel: Added new fzf result: %s, scheduling content load.", p)
+			} else {
+				log.Printf("SearchModel: Skipping fzf result %s (already in combined results, likely tagged).", p)
 			}
 		}
 
-		// Step 3: Add any remaining tagged files that were NOT in the current fuzzy search results
-		for _, item := range retainedFilesMap {
-			newCombinedResults = append(newCombinedResults, item)
-			log.Printf("SearchModel: Added previously tagged file (not in current fuzzy results): %s", item.Path)
-		}
-
-		// Step 4: Sort the combined list by path for consistent display
+		// Step 3: Sort the combined list by path for consistent display
 		sort.Slice(newCombinedResults, func(i, j int) bool {
 			return newCombinedResults[i].Path < newCombinedResults[j].Path
 		})
 
-		m.results = newCombinedResults // Update the results list with the new combined matches
+		m.results = newCombinedResults // Update the displayed results list
 
 		if len(m.results) == 0 && m.textInput.Value() != "" {
 			m.err = fmt.Errorf("no fuzzy matches found for '%s'", m.textInput.Value())
@@ -455,7 +474,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = nil
 		}
 
-		// Reset cursor to top, or keep it on a valid item if the list changed minimally
+		// Adjust cursor and viewport offset
 		if len(m.results) > 0 {
 			if m.cursor >= len(m.results) {
 				m.cursor = len(m.results) - 1
@@ -469,13 +488,14 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Printf("SearchModel: Updated results with %d combined files. Initiating content loads for new files.", len(m.results))
 		cmds = append(cmds, tea.Batch(contentLoadCmds...))
 		cmds = append(cmds, func() tea.Msg {
-			return TaggedFilesMsg(m.GetTaggedFiles())
+			return TaggedFilesMsg(m.GetTaggedFiles()) // Ensure App model gets updated list
 		})
 		return m, tea.Batch(cmds...)
 
 	case FuzzySearchErrorMsg:
 		log.Printf("SearchModel: FuzzySearchErrorMsg received: %v", msg.Err)
-		m.results = []FileItem{} // Clear results on error
+		// On error, show only tagged files if any, otherwise clear results.
+		m.results = m.GetTaggedFiles() // Display existing tagged files
 		m.err = msg.Err
 		m.querying = false
 		m.resultsViewport.SetContent("Error: " + msg.Err.Error()) // Show error in viewport
@@ -486,6 +506,7 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SearchResultsMsg: // This message type was for previous direct ripgrep output, now mostly unused.
 		log.Printf("SearchModel: SearchResultsMsg received (likely from a stale command, not used in fuzzy flow).")
 		// This case is largely deprecated as fuzzy search uses FuzzySearchResultsMsg now.
+		// If it ever gets triggered, handle it by replacing results and updating tagged.
 		m.results = msg
 		m.querying = false
 		m.cursor = 0
@@ -500,41 +521,65 @@ func (m *SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 	case SearchErrorMsg: // This message type is for errors from the underlying ripgrep content search
 		log.Printf("SearchModel: SearchErrorMsg received: %v", msg.Err)
-		m.results = []FileItem{} // Clear results on error
+		// On error, show only tagged files if any, otherwise clear results.
+		m.results = m.GetTaggedFiles() // Display existing tagged files
 		m.err = msg.Err
 		m.querying = false
 		m.resultsViewport.SetContent("Error: " + msg.Err.Error()) // Show error in viewport
 	case fileContentMsg:
 		log.Printf("SearchModel: fileContentMsg received for %s. Content length: %d", msg.Path, len(msg.Content))
-		found := false
+		// Update content for the file in both m.results (if present) and m.allTaggedFiles
+		foundInResults := false
 		for i := range m.results {
 			if m.results[i].Path == msg.Path {
 				m.results[i].Content = msg.Content
-				log.Printf("SearchModel: Content field updated for %s. New length: %d", msg.Path, len(m.results[i].Content))
-				found = true
+				foundInResults = true
 				break
 			}
 		}
-		if !found {
-			log.Printf("SearchModel: WARNING - fileContentMsg for %s received, but file not found in current results slice. It might have been untagged or filtered out.", msg.Path)
+		if !foundInResults {
+			log.Printf("SearchModel: WARNING - fileContentMsg for %s received, but file not found in current displayed results slice.", msg.Path)
+		}
+
+		// Update the content in the persistent store (m.allTaggedFiles)
+		for i := range m.allTaggedFiles {
+			if m.allTaggedFiles[i].Path == msg.Path {
+				m.allTaggedFiles[i].Content = msg.Content
+				log.Printf("SearchModel: Content field updated for %s in allTaggedFiles. New length: %d", msg.Path, len(m.allTaggedFiles[i].Content))
+				break
+			}
 		}
 
 		cmds = append(cmds, func() tea.Msg {
-			return TaggedFilesMsg(m.GetTaggedFiles())
+			return TaggedFilesMsg(m.GetTaggedFiles()) // Ensure App model gets updated list with content
 		})
 		log.Printf("SearchModel: Sent TaggedFilesMsg after fileContentMsg (ensuring content is passed).")
 
 	case fileContentErrorMsg:
 		log.Printf("SearchModel: fileContentErrorMsg received for %s: %v", msg.Path, msg.Err)
-		// We don't have a preview pane here to show the error directly to the user for file content.
-		// The error is logged.
+		// No preview pane here to show the error directly to the user for file content.
+		// The error is logged. Update the content field to reflect the error if needed
+		// in m.results and m.allTaggedFiles to prevent re-attempts for this session.
+		for i := range m.results {
+			if m.results[i].Path == msg.Path {
+				m.results[i].Content = fmt.Sprintf("Error loading content: %v", msg.Err)
+				break
+			}
+		}
+		for i := range m.allTaggedFiles {
+			if m.allTaggedFiles[i].Path == msg.Path {
+				m.allTaggedFiles[i].Content = fmt.Sprintf("Error loading content: %v", msg.Err)
+				break
+			}
+		}
 		cmds = append(cmds, func() tea.Msg {
 			return TaggedFilesMsg(m.GetTaggedFiles())
 		})
 	}
 
-	// Any KeyMsg not handled above should be passed to the resultsViewport for scrolling
+	// Any KeyMsg not handled above (Ctrl+A, Ctrl+Q) should be passed to the resultsViewport for scrolling
 	// This ensures j/k/ctrl+u/ctrl+d/pageup/pagedown keys work for results scrolling.
+	// Note: textinput.Update(msg) has already been called above.
 	if _, isKeyMsg := msg.(tea.KeyMsg); isKeyMsg {
 		m.resultsViewport, cmd = m.resultsViewport.Update(msg)
 		cmds = append(cmds, cmd)
@@ -613,7 +658,11 @@ func (m *SearchModel) View() string {
 			resultsContentBuilder.WriteString("\n")
 		}
 	} else if m.textInput.Value() == "" && !m.querying && m.err == nil {
-		resultsContentBuilder.WriteString(lipgloss.NewStyle().Foreground(styles.MutedColor).Padding(0, 1).Render("Start typing to search..."))
+		statusSection = lipgloss.NewStyle().
+			Foreground(styles.MutedColor).
+			Padding(0, 1).
+			Render("Start typing to search or press Esc to show all tagged files.")
+		resultsContentBuilder.WriteString(statusSection)
 		resultsContentBuilder.WriteString("\n")
 	}
 
